@@ -88,6 +88,21 @@ int main(int argc,char** argv) {
         const auto b=loxfx::prepare_groom(fixture(5.0f,2),
                                            {.followers_per_guide=2});
         check(a&&b,"prepare independent grooms");
+        // Context construction owns its Vulkan device/instance and all
+        // invariant resources. Inject failures at representative creation
+        // phases and confirm unwinding never poisons subsequent context use.
+        for (int creation_point : {0, 2, 4, 6}) {
+            bool caught=false;
+            gpu::diagnostic_fail_creation_after(creation_point);
+            try {
+                gpu::DeviceContext rejected(argv[1]);
+            } catch (const std::runtime_error& failure) {
+                caught=std::string_view(failure.what()).find(
+                    "injected Vulkan resource creation failure")!=std::string_view::npos;
+            }
+            gpu::diagnostic_fail_creation_after(-1);
+            check(caught,"context creation failure injection was not triggered");
+        }
         gpu::DeviceContext context(argv[1]);
         const VkDevice shared=context.native_device();
         check(shared!=VK_NULL_HANDLE,"standalone device created");

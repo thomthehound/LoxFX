@@ -220,6 +220,7 @@ struct DeviceContext::Impl {
         VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         ici.pApplicationInfo = &app;
         VkInstance fresh = VK_NULL_HANDLE;
+        creation_checkpoint();
         verify(vkCreateInstance(&ici, nullptr, &fresh), "create Vulkan instance");
         instance = fresh;
         std::uint32_t count = 0;
@@ -255,6 +256,7 @@ struct DeviceContext::Impl {
                     di.queueCreateInfoCount = 1;
                     di.pQueueCreateInfos = &qi;
                     VkDevice fresh_device = VK_NULL_HANDLE;
+                    creation_checkpoint();
                     if (vkCreateDevice(candidate, &di, nullptr, &fresh_device) != VK_SUCCESS)
                         continue;
                     // Commit only a valid device. This test-owned adapter
@@ -285,6 +287,7 @@ struct DeviceContext::Impl {
         lci.bindingCount=3;
         lci.pBindings=bindings.data();
         VkDescriptorSetLayout created_layout=VK_NULL_HANDLE;
+        creation_checkpoint();
         verify(vkCreateDescriptorSetLayout(device,&lci,nullptr,&created_layout),
                "create shader resource layout");
         layout=created_layout;
@@ -297,6 +300,7 @@ struct DeviceContext::Impl {
         pci.pushConstantRangeCount=1;
         pci.pPushConstantRanges=&push;
         VkPipelineLayout created_pipeline_layout=VK_NULL_HANDLE;
+        creation_checkpoint();
         verify(vkCreatePipelineLayout(device,&pci,nullptr,&created_pipeline_layout),
                "create pipeline layout");
         pipeline_layout=created_pipeline_layout;
@@ -305,6 +309,7 @@ struct DeviceContext::Impl {
         smci.codeSize=shader.size()*sizeof(std::uint32_t);
         smci.pCode=shader.data();
         VkShaderModule module=VK_NULL_HANDLE;
+        creation_checkpoint();
         verify(vkCreateShaderModule(device,&smci,nullptr,&module),"create integration module");
         VkPipelineShaderStageCreateInfo sci{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         sci.stage=VK_SHADER_STAGE_COMPUTE_BIT;
@@ -314,6 +319,7 @@ struct DeviceContext::Impl {
         cpi.stage=sci;
         cpi.layout=pipeline_layout;
         VkPipeline created_pipeline=VK_NULL_HANDLE;
+        creation_checkpoint();
         const VkResult build=vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&cpi,nullptr,&created_pipeline);
         vkDestroyShaderModule(device,module,nullptr);
         verify(build,"create integration pipeline");
@@ -323,6 +329,7 @@ struct DeviceContext::Impl {
         poolci.queueFamilyIndex=family;
         poolci.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         VkCommandPool created_pool=VK_NULL_HANDLE;
+        creation_checkpoint();
         verify(vkCreateCommandPool(device,&poolci,nullptr,&created_pool),"create diagnostic pool");
         command_pool=created_pool;
         VkCommandBufferAllocateInfo cbai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
@@ -334,6 +341,7 @@ struct DeviceContext::Impl {
         diagnostic_commands=command;
         VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         VkFence created_fence=VK_NULL_HANDLE;
+        creation_checkpoint();
         verify(vkCreateFence(device,&fci,nullptr,&created_fence),"create diagnostic fence");
         fence=created_fence;
         if (timestamp_bits) {
