@@ -13,19 +13,17 @@ endif()
 # godot-cpp exposes godot::cpp as its CMake target alias.
 add_subdirectory("${LOXFX_GODOT_CPP_SOURCE_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}/godot-cpp")
-# godot-cpp selects the CRT for its own build on Windows (static by default).
-# LoxFX::Core is created earlier, so its default MSVC runtime may disagree.
-# Align both LoxFX targets with the actual godot-cpp runtime selection rather
-# than hardcoding /MD, /MT or overriding the host's GODOTCPP_USE_STATIC_CPP.
+# The top-level CMake project selects CMAKE_MSVC_RUNTIME_LIBRARY before
+# it creates any targets when this adapter is enabled. Do not fix up only
+# LoxFX::Core here: that would leave other linked tools/tests mismatched.
 if(MSVC)
-  get_target_property(_godot_cpp_runtime godot-cpp MSVC_RUNTIME_LIBRARY)
-  if(NOT _godot_cpp_runtime OR _godot_cpp_runtime STREQUAL "_godot_cpp_runtime-NOTFOUND")
-    set(_godot_cpp_runtime "${CMAKE_MSVC_RUNTIME_LIBRARY}")
+  get_target_property(_godot_runtime godot-cpp MSVC_RUNTIME_LIBRARY)
+  get_target_property(_core_runtime loxfx_core MSVC_RUNTIME_LIBRARY)
+  if(NOT _godot_runtime STREQUAL _core_runtime)
+    message(FATAL_ERROR
+      "The Godot adapter and LoxFX Core require one MSVC runtime; "
+      "set CMAKE_MSVC_RUNTIME_LIBRARY consistently for the whole build")
   endif()
-  if(NOT _godot_cpp_runtime)
-    message(FATAL_ERROR "Unable to determine the MSVC runtime selected by godot-cpp")
-  endif()
-  set_property(TARGET loxfx_core PROPERTY MSVC_RUNTIME_LIBRARY "${_godot_cpp_runtime}")
 endif()
 add_library(loxfx_godot SHARED
   src/entry.cpp
