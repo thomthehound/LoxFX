@@ -60,6 +60,14 @@ For three followers/guide and 64 prepared guides of 16 vertices:
 - Four per-vertex stages, two strand stages, and two local-shape iterations
   lead to 4,288 intended master-guide lanes vs. 17,152 reference-launched lanes.
 
+The Linux reference-asset smoke test also confirmed the real, AMD-authored
+Ratboy groom metadata: the mohawk contains 2,228 guides × 32 vertices and the
+short groom contains 37,747 guides × 8 vertices. With requested follower
+multiplicities of three and one respectively, the guide-only planned launch
+counts are 293,440 and 1,321,600 lanes, compared with 1,173,760 and
+2,643,200 in the original host's total-strand launch formula. The assets
+are downloaded only by CI and are not distributed in the LoxFX source tree.
+
 That is **4× the thread lanes**, NOT evidence of a 4× performance slowdown
 or a 4× runtime speedup after correcting it. The extra groups may also index
 past valid master-strand data: their shader-side index calculation treats
