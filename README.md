@@ -21,8 +21,8 @@ provides an independent comparison baseline.
 | --- | --- |
 | Portable core | C++23 asset model, validated TressFX 4.x `.tfx` import, optional attributes, and an installable CMake package |
 | Groom preparation | Persistent strand data, rest geometry, tangents, segment lengths, deterministic followers, and source-aligned GPU work plans |
-| Vulkan | Native compute execution of integration/global-shape, strand-level motion, and velocity-shock propagation, with persistent GPU resources and caller-recorded commands |
-| Direct3D 12 | The same three HLSL stages executed as SM6.6 DXIL through native D3D12, with independent resource binding and command recording |
+| Vulkan | Native compute execution of four solver stages plus length/wind constraints, with persistent GPU resources and caller-recorded commands |
+| Direct3D 12 | The same shared HLSL stages executed as SM6.6 DXIL through native D3D12, with independent resource binding and command recording |
 | Verification | Windows/Linux core tests, Linux software-Vulkan tests, Windows D3D12 WARP tests, and shared numerical fixtures |
 
 The installed SDK currently exports **`LoxFX::Core`**. GPU implementations
@@ -38,12 +38,13 @@ LoxFX follows the six-stage TressFX guide-strand execution model:
 2. **Strand-level motion** — per-guide rotation, translation, and
    velocity-shock parameters using compact root-position history. *Executing.*
 3. **Velocity-shock propagation** — apply strand-level motion to guides. *Executing.*
-4. **Local shape constraints** — preserve strand curvature and local structure.
-5. **Length, wind, and collision** — constrain and interact with the scene.
+4. **Local shape constraints** — preserve strand curvature and local structure. *Executing.*
+5. **Length, wind, and collision** — length and wind execute; contact and
+   final tangent updates remain.
 6. **Follower update** — expand simulated guides into renderable hair.
 
-Development continues through skeletal attachments, local-shape constraints,
-length and wind behavior, collision, and follower publication. Once the
+Development continues through skeletal attachments, collision, tangent
+publication, and follower generation. Once the
 pipeline produces visible, animated hair, physical-GPU profiling and matched
 reference-scene comparisons will guide performance and rendering improvements.
 
