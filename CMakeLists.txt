@@ -17,6 +17,10 @@ option(LOXFX_BUILD_VULKAN_SMOKE "Build experimental Vulkan compute smoke test" O
 # before the native D3D12 runtime is implemented.
 option(LOXFX_ENABLE_D3D12_SHADERS "Compile the shared integration stage to DXIL" OFF)
 option(LOXFX_BUILD_D3D12_SMOKE "Build internal native D3D12 stage-one test" OFF)
+option(LOXFX_BUILD_GODOT_ADAPTER "Build optional diagnostic Godot GDExtension" OFF)
+set(LOXFX_GODOT_CPP_SOURCE_DIR "" CACHE PATH "Existing godot-cpp checkout")
+set(LOXFX_GODOT_COMPATIBILITY_MINIMUM "4.7" CACHE STRING
+  "Oldest Godot minor version supported by the selected generated bindings")
 
 add_library(loxfx_core STATIC
   src/tfx_import.cpp
@@ -54,6 +58,15 @@ if(BUILD_TESTING)
   add_executable(loxfx_prepared_groom_tests tests/prepared_groom_tests.cpp)
   target_link_libraries(loxfx_prepared_groom_tests PRIVATE LoxFX::Core)
   add_test(NAME loxfx_prepared_groom COMMAND loxfx_prepared_groom_tests)
+endif()
+
+# The game-engine adapter is optional and never changes the installed core
+# target. It cannot depend on Godauldron or the experimental GPU smoke APIs.
+if(LOXFX_BUILD_GODOT_ADAPTER)
+  add_subdirectory(adapters/godot)
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/adapters/godot/loxfx.gdextension.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/loxfx.gdextension" @ONLY)
 endif()
 
 # Public, relocatable CMake package for independently built consumers.
