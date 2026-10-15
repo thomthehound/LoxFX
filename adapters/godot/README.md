@@ -69,8 +69,9 @@ The vertex update intentionally copies uncompressed 32-bit XYZ data: Godot's
 render vertex-buffer format uses three float32 components even if an engine
 build uses double-precision CPU `Vector3` values. The adapter bounds both
 visible vertex counts and total upload bytes, and excludes workgroup padding
-from the displayed mesh. The checked Linux runtime smoke uses Godot 4.7.2
-and a real AMD Ratboy asset. It does not constitute a visual GPU-output test.
+from the displayed mesh. The Linux runtime smoke is configured to exercise
+Godot 4.7.2 with a real AMD Ratboy asset. Passing this smoke would not
+constitute a visual GPU-output test.
 
 The adapter does not select Vulkan/D3D12 devices, share Godot native
 resources, submit on the renderer queue or block each simulation stage.
