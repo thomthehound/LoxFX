@@ -68,6 +68,7 @@ public:
     VkCommandBuffer begin_diagnostic_commands();
     void submit_diagnostic_and_wait();
     [[nodiscard]] std::vector<Float4> diagnostic_read_positions(const GroomState& groom);
+    [[nodiscard]] std::vector<Float4> diagnostic_read_root_history(const GroomState& groom);
     [[nodiscard]] double last_diagnostic_gpu_milliseconds() const noexcept;
     [[nodiscard]] const std::string& device_name() const noexcept;
     [[nodiscard]] bool software_device() const noexcept;

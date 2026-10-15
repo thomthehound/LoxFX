@@ -61,6 +61,7 @@ public:
     ID3D12GraphicsCommandList* begin_diagnostic_commands();
     void submit_diagnostic_and_wait();
     [[nodiscard]] std::vector<Float4> diagnostic_read_positions(const GroomState& groom);
+    [[nodiscard]] std::vector<Float4> diagnostic_read_root_history(const GroomState& groom);
     [[nodiscard]] double last_diagnostic_gpu_milliseconds() const noexcept;
     [[nodiscard]] std::uint64_t diagnostic_submission_count() const noexcept;
     [[nodiscard]] ID3D12Device* native_device() const noexcept;
