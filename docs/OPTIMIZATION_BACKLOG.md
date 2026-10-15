@@ -35,6 +35,11 @@ reproducible GPU and correctness evidence, or documented rejection.
 
 **Observation / source:** the initial `adapters/godot/src/loxfx_groom_3d.cpp`
 supports diagnostic packed CPU positions and Godot vertex-buffer updates.
+The optional `LOXFX_GODOT_NATIVE_DIAGNOSTIC` mode now also records LoxFX's
+actual six native compute stages and synchronously snapshots published
+follower positions via its existing diagnostic readback before those line
+vertices are uploaded. This proves a working consumer boundary without
+claiming a production hardware path.
 Its per-frame line-vertex expansion and CPU-to-GPU upload scale with every
 rendered guide and follower. That is an intentional temporary inspection
 path, **not** the eventual native renderer. The existing native Vulkan
