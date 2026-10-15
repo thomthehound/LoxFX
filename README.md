@@ -21,7 +21,7 @@ provides an independent comparison baseline.
 | --- | --- |
 | Portable core | C++23 asset model, validated TressFX 4.x `.tfx` import, optional attributes, and an installable CMake package |
 | Groom preparation | Persistent strand data, rest geometry, tangents, segment lengths, deterministic followers, and source-aligned GPU work plans |
-| Vulkan | Native compute execution of four solver stages plus length/wind constraints, with persistent GPU resources and caller-recorded commands |
+| Vulkan | Native compute execution through follower publication, with persistent positions/tangents and caller-recorded commands; collision remains outstanding |
 | Direct3D 12 | The same shared HLSL stages executed as SM6.6 DXIL through native D3D12, with independent resource binding and command recording |
 | Verification | Windows/Linux core tests, Linux software-Vulkan tests, Windows D3D12 WARP tests, and shared numerical fixtures |
 
@@ -41,12 +41,12 @@ LoxFX follows the six-stage TressFX guide-strand execution model:
 4. **Local shape constraints** — preserve strand curvature and local structure. *Executing.*
 5. **Length, wind, and collision** — length and wind execute; contact and
    final tangent updates remain.
-6. **Follower update** — expand simulated guides into renderable hair.
+6. **Follower update** — publish guide/follower positions and final tangents. *Executing.*
 
-Development continues through skeletal attachments, collision, tangent
-publication, and follower generation. Once the
-pipeline produces visible, animated hair, physical-GPU profiling and matched
-reference-scene comparisons will guide performance and rendering improvements.
+Development continues through full skeletal attachments, body collision,
+and a minimal visual consumer of the published GPU buffers. Physical-GPU
+profiling and matched reference-scene comparisons will then guide performance
+and rendering improvements.
 
 ## Build the core
 
