@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
         constexpr float dt = 1.0f / 60.0f;
         constexpr float g = 9.81f;
         gpu.advance({.time_step = dt, .gravity = g, .damping = 0}, 3);
+        const double three_step_gpu_ms = gpu.last_gpu_milliseconds();
         const auto after = gpu.read_positions();
         const float delta = g * dt * dt;
         // Verlet from rest with no damping: x_n = x_0 + (1+2+3)*(-g dt²).
@@ -65,9 +66,11 @@ int main(int argc, char** argv) {
                   << (gpu.is_software_device() ? " (software)" : " (hardware/unknown)")
                   << "\nPrepared vertices: " << groom->work.packed_total_vertices
                   << "\nPersistent device bytes: " << gpu.resident_buffer_bytes()
-                  << "\nThree-stage-1-steps GPU milliseconds: "
+                  << "\nStage 1, three-step batch GPU milliseconds: "
+                  << three_step_gpu_ms << "\n"
+                  << "Stage 1, final one-step shape batch GPU milliseconds: "
                   << gpu.last_gpu_milliseconds() << "\n";
-        if (gpu.last_gpu_milliseconds() < 0)
+        if (three_step_gpu_ms < 0)
             std::cout << "Timestamp unsupported on selected queue\n";
         std::cout << "PASS: GPU-integration stage geometry/history/root tests\n";
         return 0;

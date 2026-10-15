@@ -434,7 +434,12 @@ struct IntegrationRuntime::Impl {
 
     std::vector<Float4> read_positions() {
         begin_commands();
-        barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+        // read_positions() may execute directly after initialization, before
+        // any compute dispatch. The last producer is then a transfer upload,
+        // not a shader write. Cover either producer explicitly.
+        barrier(VK_PIPELINE_STAGE_TRANSFER_BIT |
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         VkBufferCopy copy{};
         copy.size = vertex_bytes;
