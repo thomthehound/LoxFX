@@ -337,7 +337,8 @@ struct DeviceContext::Impl {
 };
 
 struct GroomState::Impl {
-    std::shared_ptr<DeviceContext::Impl> context;
+    std::shared_ptr<void> context_lifetime;
+    const void* context_id = nullptr;
     ComPtr<ID3D12Resource> current, previous, rest;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0;
     std::uint64_t bytes=0;
@@ -369,7 +370,8 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
     const auto validation=validate_prepared_groom(source);
     if(!validation)throw std::invalid_argument(validation.error());
     auto g=std::make_unique<GroomState::Impl>();
-    g->context=impl_;
+    g->context_lifetime=impl_;
+    g->context_id=impl_.get();
     g->vertices=source.vertices_per_strand;
     g->followers=source.followers_per_guide;
     g->guides=source.work.packed_guide_strands;
@@ -408,7 +410,7 @@ void DeviceContext::record_integration(ID3D12GraphicsCommandList* cmd,
              const GroomState& groom,const IntegrationParameters& p,
              std::uint32_t steps)const{
     if(!impl_||!cmd||!groom.impl_||
-       groom.impl_->context.get()!=impl_.get())
+       groom.impl_->context_id!=impl_.get())
         throw std::invalid_argument("D3D12 groom/command context mismatch");
     validate_parameters(p);
     if(steps==0||steps>4096)throw std::invalid_argument("integration steps out of range");
@@ -439,7 +441,7 @@ void DeviceContext::submit_diagnostic_and_wait(){
     impl_->submit();
 }
 std::vector<Float4> DeviceContext::diagnostic_read_positions(const GroomState& state){
-    if(!impl_||!state.impl_||state.impl_->context.get()!=impl_.get())
+    if(!impl_||!state.impl_||state.impl_->context_id!=impl_.get())
         throw std::invalid_argument("readback from unrelated D3D12 context");
     const auto& g=*state.impl_;
     auto readback=allocate_buffer(impl_->device.Get(),g.bytes,
