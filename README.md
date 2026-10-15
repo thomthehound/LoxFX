@@ -52,8 +52,10 @@ C++23 requirement. The public ABI is not yet frozen.
 
 **Architecture review:** the stage-one Vulkan module is a working
 experimental compute harness, **not a shipping runtime API**. The current
-per-groom graphics-device/submission ownership is being redesigned
-before merging it as a production SDK interface. See
+per-groom device ownership has now been replaced with **one shared Vulkan
+context, separate per-groom buffers and caller-recorded command batches**.
+Native D3D12 runtime execution, production scheduler validation and hardware
+profiling still remain before this becomes an installed SDK interface. See
 [the GPU runtime architecture decision](docs/GPU_RUNTIME_ARCHITECTURE.md)
 and [issue #13](https://github.com/thomthehound/LoxFX/issues/13).
 

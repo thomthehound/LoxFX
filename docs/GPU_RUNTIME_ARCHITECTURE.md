@@ -12,27 +12,45 @@ creation/lifetime/synchronization review findings because the current
 Do not merge it as a public SDK runtime without correcting these boundaries.
 Tracked as [issue #13](https://github.com/thomthehound/LoxFX/issues/13).
 
+## Current remediation status
+
+**Implemented in the draft smoke harness:** the old device-owning
+`IntegrationRuntime` code and header were deleted. An explicit
+standalone/borrowed `DeviceContext` now shares a single logical Vulkan
+device and pipeline across independent `GroomState` objects. A
+`record_integration(VkCommandBuffer, ...)` method records GPU work
+without submission/wait; diagnostic submission and readback are separate.
+Initial uploads use temporary staging, and Vulkan creation handles are
+committed only after successful calls. The Linux fixture exercises two
+grooms on one device and an externally borrowed logical device.
+
+**Not yet proven:** injected Vulkan failures, production frames in flight,
+host-renderer interoperability, multiple queues, native D3D12 runtime,
+full six-stage source equivalence or physical hardware throughput.
+The findings below describe the **historical implementation that was
+replaced**, not the code now compiled by the smoke target.
+
 ## Findings: this is a boundary problem, not a missing sequence of checks
 
-- **[P0] Per-groom graphics device and pipeline.** Every
+- **[P0, historical/fixed in smoke harness] Per-groom graphics device and pipeline.** Every
   `IntegrationRuntime(PreparedGroom, shader_path)` creates its own
   `VkInstance`, adapter/device, queue, pipeline, descriptor pool, command
   pool and fence. For N grooms this can create N devices and N copies of
   invariant shader pipeline objects. In an engine, it can silently put hair
   on a different adapter from rendering. The code's automatic multi-GPU
   fallback is consequently at the **wrong layer**.
-- **[P0] Blocking, self-submitting simulator.** `advance()` records a
+- **[P0, historical/fixed in smoke harness] Blocking, self-submitting simulator.** `advance()` records a
   command buffer, submits, waits for completion, then reads timestamp
   results. A shipping simulation pass must instead **record** into a
   host-controlled queue/command context. Synchronization at dependency
   edges is required; a forced CPU fence every advance is not.
-- **[P0] Exception-unsafe Vulkan output handles.** The latest Codex P2
+- **[P0, replacement requires fault injection] Exception-unsafe Vulkan output handles.** The latest Codex P2
   observes `vkCreateBuffer(..., &result.buffer)` and
   `vkCreateDevice(..., &device)` writing into owned handles before
   checking success. Vulkan output values are not valid on failure; cleanup
   must not destroy them. Similar creation paths require one coherent
   RAII policy, not independent patches to each `catch`.
-- **[P1] Resource allocation is tied to adapter search.** Four dedicated
+- **[P1, historical/fixed in smoke harness] Resource allocation is tied to adapter search.** Four dedicated
   `VkDeviceMemory` allocations per groom and a persistent staging buffer
   make the newly written candidate-device retry logic grow without
   solving resource pooling, external allocator ownership or device-loss

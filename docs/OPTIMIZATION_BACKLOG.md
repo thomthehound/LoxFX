@@ -213,19 +213,19 @@ this avoids per-groom device and pipeline duplication before any custom
 suballocator work. No measured savings yet.
 
 
-**Evidence / source:** `src/vulkan/integration.cpp` currently requests
-individual Vulkan memory allocations for current/previous/rest positions and
-one persistent host-visible staging buffer per groom. Initial device
-selection now checks `maxMemoryAllocationSize` and retries actual buffer
-allocations on subsequent eligible GPUs if a previous adapter fails.
-This milestone removes
-three redundant **CPU** upload copies and uses one staging image for all three
-initial uploads, but staging still remains allocated for the lifetime of the
-runtime, and allocations are dedicated. Hardware cost is not yet measured.
+**Evidence / source:** the deleted monolithic
+`src/vulkan/integration.cpp` created full devices and retained upload
+staging per groom. Its replacement `src/vulkan/smoke_context.cpp`
+has one explicit device context, independent groom GPU buffers and
+temporary host staging freed after its initialization/diagnostic
+submission completes. Three dynamic/rest buffer allocations per groom
+are still dedicated and have no measured performance baseline.
 
-**Suspected cost:** allocation count, fragmentation, and retained host memory
-for multiple grooms. `allocated_buffer_bytes()` reports the real Vulkan
-allocation requirements including staging, not VRAM residency.
+**Suspected cost:** multiple dedicated Vulkan allocations can fragment
+heaps and add allocation overhead at scene load. Shared staging and
+suballocation may help, but no multi-groom hardware measurements exist.
+`GroomState::allocated_buffer_bytes()` reports the three allocated
+device buffers (not VRAM residency or transient staging).
 
 **Experiment:** after multiple grooms and asynchronous command submission
 work, compare shared staging suballocation/recycling and device-local
@@ -244,6 +244,11 @@ throughput. **Status:** blocked until multi-groom runtime and GPU profiling.
 - **2026-10-15, PR #3:** Deterministic prepared interleaved follower data,
   real Ratboy smoke tests and static upload sizes. Retain current
   correctness path until GPU buffer consumers are audited (OPT-001/002).
+- **2026-10-15, architecture remediation:** Replaced the per-groom
+  device-owning runtime with an internal shared/borrowed Vulkan context,
+  record-only integration, two-groom CI and temporary setup/readback staging.
+  Frame submission and multi-groom allocation optimization remain OPT-003
+  and OPT-011, unmeasured on consumer GPUs.
 - **2026-10-15, subsequent Vulkan review:** Added separate allocation-size
   admission and transactional allocation retry across eligible adapters;
   this is correctness work during initialization, not a frame speedup.
