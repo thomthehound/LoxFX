@@ -45,6 +45,8 @@ void LoxFXGroom3D::_bind_methods() {
                     &LoxFXGroom3D::is_native_diagnostic_active);
     ClassDB::bind_method(D_METHOD("get_native_diagnostic_steps"),
                     &LoxFXGroom3D::get_native_diagnostic_steps);
+    ClassDB::bind_method(D_METHOD("get_native_diagnostic_context_count"),
+                    &LoxFXGroom3D::get_native_diagnostic_context_count);
     ClassDB::bind_method(D_METHOD("get_native_diagnostic_root_position"),
                     &LoxFXGroom3D::get_native_diagnostic_root_position);
     ClassDB::bind_method(D_METHOD("get_native_diagnostic_backend"),
@@ -438,6 +440,14 @@ int LoxFXGroom3D::get_native_diagnostic_steps() const {
     return static_cast<int>(std::min(
         native_frames_, static_cast<std::uint64_t>(
             std::numeric_limits<int>::max())));
+#else
+    return 0;
+#endif
+}
+
+int LoxFXGroom3D::get_native_diagnostic_context_count() const {
+#if defined(LOXFX_GODOT_NATIVE_DIAGNOSTIC)
+    return static_cast<int>(NativeDiagnostic::active_context_count());
 #else
     return 0;
 #endif
