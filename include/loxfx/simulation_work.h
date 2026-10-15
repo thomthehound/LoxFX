@@ -10,6 +10,9 @@
 
 namespace loxfx {
 
+// Bound expensive dependent corrections at preparation time, not each frame.
+inline constexpr std::uint32_t max_local_shape_iterations = 64;
+
 // Stages and their order are traced to AMD TressFX 4.1
 // src/TressFX/TressFXSimulation.cpp::Simulate.
 enum class SimulationStage : std::uint8_t {
