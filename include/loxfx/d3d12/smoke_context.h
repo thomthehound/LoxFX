@@ -63,7 +63,10 @@ public:
     // Final pass publishes follower positions and per-vertex tangents.
     void record_followers(ID3D12GraphicsCommandList* command_list,
                           const GroomState& groom) const;
-    void record_length_wind(ID3D12GraphicsCommandList* command_list,
+    // Stage six: publish followers and final tangents to persistent GPU buffers.
+    void record_followers(ID3D12GraphicsCommandList* command_list,
+                          const GroomState& groom) const;
+        void record_length_wind(ID3D12GraphicsCommandList* command_list,
                             const GroomState& groom,
                             const LengthWindParameters& parameters) const;
     void record_local_shape(ID3D12GraphicsCommandList* command_list,
@@ -82,6 +85,7 @@ public:
     void submit_diagnostic_and_wait();
     [[nodiscard]] std::vector<Float4> diagnostic_read_tangents(const GroomState& groom);
     [[nodiscard]] std::vector<Float4> diagnostic_read_positions(const GroomState& groom);
+    [[nodiscard]] std::vector<Float4> diagnostic_read_tangents(const GroomState& groom);
     [[nodiscard]] std::vector<Float4> diagnostic_read_root_history(const GroomState& groom);
     [[nodiscard]] std::vector<StrandMotionData> diagnostic_read_strand_data(const GroomState& groom);
     [[nodiscard]] double last_diagnostic_gpu_milliseconds() const noexcept;
