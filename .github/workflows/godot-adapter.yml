@@ -62,4 +62,4 @@ jobs:
           test -n "$engine"
           chmod +x "$engine"
           "$engine" --headless --path "$project" --editor --import --quit
-          "$engine" --headless --path "$project" --script res://runtime_smoke.gd
+          timeout 120s "$engine" --headless --path "$project" --script res://runtime_smoke.gd
