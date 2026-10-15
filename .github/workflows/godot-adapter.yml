@@ -113,7 +113,7 @@ jobs:
           # The real integration gate is class registration and dynamic mesh
           # publication in a running SceneTree, not a rushed editor teardown.
           if ! timeout 120s "$engine" --headless --path "$project" \
-              --script res://runtime_smoke.gd; then
+              --script res://runtime_smoke.gd -- --native-required; then
             echo "::error::Native Godot adapter failed its runtime smoke"
             if command -v gdb >/dev/null; then
               gdb -batch -ex "set pagination off" -ex run \
