@@ -152,8 +152,11 @@ length constraints incur workgroup barriers.
 and visual stability against host-loop and shader-loop strategies, then test
 safe fusion and convergence-aware iteration counts with timestamps.
 
-**Prerequisite:** functioning solver. **Status:** blocked.
-**Source:** [simulation execution trace](SIMULATION_EXECUTION_TRACE.md).
+**Prerequisite:** complete solver and visual consumer for iteration-cost comparison.
+**Status:** implemented-awaiting-measurement (correct local-shape iteration
+semantics; length-constraint iteration optimization remains pending).
+**Source:** [local-shape stage](LOCAL_SHAPE_STAGE.md) and
+[simulation execution trace](SIMULATION_EXECUTION_TRACE.md).
 
 **Evidence / source:** `LocalShapeConstraints` and `LengthConstriantsWindAndCollision` in TressFX 4.1 `TressFXSimulation.hlsl`; 64-vertex iteration discrepancy in [execution trace](SIMULATION_EXECUTION_TRACE.md). **Suspected cost:** host dispatches or synchronization per iteration; not quantified.
 **Acceptance:** source-intended constraint convergence/length error and temporal stability with lower measured stage/full-frame cost, or explicit rejection. Open a dedicated issue when the correct solver is running.
