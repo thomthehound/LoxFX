@@ -30,15 +30,17 @@ jobs:
       - name: Configure optional GDExtension
         run: >
           cmake -S . -B build/godot
-          -DBUILD_TESTING=OFF
-          -DLOXFX_BUILD_TOOLS=OFF
+          -DBUILD_TESTING=ON
+          -DLOXFX_BUILD_TOOLS=ON
           -DLOXFX_BUILD_GODOT_ADAPTER=ON
           -DLOXFX_GODOT_CPP_SOURCE_DIR=${{ github.workspace }}/external/godot-cpp
           "-DGODOTCPP_API_VERSION=4.7"
           -DGODOTCPP_TARGET=template_release
           -DCMAKE_BUILD_TYPE=Release
-      - name: Compile Godot adapter
-        run: cmake --build build/godot --config Release --target loxfx_godot --parallel 2
+      - name: Compile Godot adapter and core consumers in one CMake build
+        run: cmake --build build/godot --config Release --target loxfx_godot loxfx_tfx_inspect loxfx_prepared_groom_tests --parallel 2
+      - name: Execute prepared-groom core test in adapter-enabled build
+        run: ctest --test-dir build/godot -C Release -R loxfx_prepared_groom --output-on-failure
       - name: Descriptor generated for opt-in Godot project
         shell: bash
         run: test -s build/godot/loxfx.gdextension
