@@ -8,6 +8,7 @@ const GROOM_PATH := "res://experiments/loxfx/assets/Ratboy_mohawk.tfx"
 const SHADER_DIR := "res://experiments/loxfx/shaders/"
 const DYNAMIC_AMPLITUDE_METERS := 0.18
 
+var _lab_params: Dictionary = {}
 var _lox_groom: Variant
 var _visual_scale: float = 1.0
 var _fitted_local_position: Vector3
@@ -60,6 +61,7 @@ func _fit_to_head() -> void:
 
 
 func godauldron_preview(parameters: Dictionary) -> void:
+    _lab_params = parameters.duplicate(true)
     # Only the neutral stage's still pose is used: turn/nod would rotate
     # line geometry as a rigid body and misrepresent simulated root motion.
     var stage_params: Dictionary = parameters.duplicate(true)
@@ -71,7 +73,7 @@ func godauldron_setup(parameters: Dictionary) -> void:
     _ready_to_step = false
     _elapsed = 0.0
     _last_failure = ""
-    _subject_initial = Vector3(0, 1.55, 0)
+    _lab_params = parameters.duplicate(true)
     var stage_params: Dictionary = parameters.duplicate(true)
     stage_params["motion"] = "still"
     super.godauldron_setup(stage_params)
@@ -100,8 +102,9 @@ func godauldron_step(dt: float) -> void:
     if not _ready_to_step:
         return
     _elapsed += dt
+    super.godauldron_seek(_elapsed)
     var movement := 0.0
-    if String(_params.get("motion", "still")) == "sway":
+    if String(_lab_params.get("motion", "still")) == "sway":
         movement = DYNAMIC_AMPLITUDE_METERS * sin(_elapsed * 1.4)
     # The head translates in world space. Countertranslation of the
     # diagnostic mesh node removes double application of the same motion,
@@ -116,6 +119,24 @@ func godauldron_step(dt: float) -> void:
         _ready_to_step = false
         _last_failure = _lox_groom.get_last_error()
         push_error(_last_failure)
+
+
+# A stateful GPU solver has no arbitrary analytical seek. Explicitly
+# rewind and replay bounded fixed steps; never use the inherited stage
+# implementation to teleport a simulated groom to a new timeline position.
+func godauldron_seek(seconds: float) -> void:
+    var target: int = int(round(maxf(seconds, 0.0) * 60.0))
+    if target > 1200:
+        _last_failure = "Diagnostic GPU replay capped at 1200 steps"
+        push_warning(_last_failure)
+        return
+    var existing: int = int(round(_elapsed * 60.0))
+    if target < existing:
+        godauldron_setup(_lab_params)
+        existing = 0
+    while existing < target and _ready_to_step:
+        godauldron_step(1.0 / 60.0)
+        existing += 1
 
 
 func godauldron_capture_metadata() -> Dictionary:
