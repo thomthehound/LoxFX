@@ -214,6 +214,29 @@ int main(int argc,char** argv) {
         require(std::abs(host_result[1].y-(1.0f-15*delta))<0.0001f,
                 "externally allocated command list advances GPU history");
 
+        // The same moving-root test as Vulkan. Compact root history is
+        // two Float4 values per padded guide, never a full follower history.
+        const auto history_before=context.diagnostic_read_root_history(g1);
+        require(history_before.size()==first->work.packed_guide_strands*2,
+                "compact root history allocation");
+        for(float translation : {0.5f,0.9f,1.2f}) {
+            auto* motion=context.begin_diagnostic_commands();
+            context.record_integration(motion,g1,
+                {.time_step=dt,.gravity=g,.damping=0,
+                 .root_translation_x=translation},1);
+            context.submit_diagnostic_and_wait();
+            const auto current=context.diagnostic_read_positions(g1);
+            require(std::abs(current[0].x-translation)<0.0001f,
+                    "D3D12 root follows host attachment offset");
+            require(current[4].x==0.0f,
+                    "D3D12 follower publication remains separate");
+        }
+        const auto root_history=context.diagnostic_read_root_history(g1);
+        require(std::abs(root_history[0].x-0.5f)<0.0001f,
+                "D3D12 previous-previous roots match Vulkan history");
+        require(context.diagnostic_read_positions(g2)[0].y==5.0f,
+                "D3D12 other groom roots stay independent");
+
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
                  <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms

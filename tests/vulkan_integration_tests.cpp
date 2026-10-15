@@ -232,6 +232,30 @@ int main(int argc,char** argv) {
         check(std::abs(host_after[1].y-(1.0f-15*step))<0.0001f,
               "externally submitted commands advance the same GPU history");
 
+        // Animated attachment offsets are passed as frame constants; no
+        // per-step CPU groom repack. Root history stores two vertices/guide.
+        const auto history_before=context.diagnostic_read_root_history(first);
+        check(history_before.size()==a->work.packed_guide_strands*2,
+              "compact root history has exactly two vertices per padded guide");
+        for(float translation : {0.5f,0.9f,1.2f}) {
+            const auto motion=context.begin_diagnostic_commands();
+            context.record_integration(motion,first,
+                {.time_step=dt,.gravity=gravity,.damping=0,
+                 .root_translation_x=translation},1);
+            context.submit_diagnostic_and_wait();
+            const auto current=context.diagnostic_read_positions(first);
+            check(std::abs(current[0].x-translation)<0.0001f,
+                  "root follows host attachment offset");
+            check(current[4].x==0.0f,
+                  "follower publication is not performed during integration");
+        }
+        const auto root_history=context.diagnostic_read_root_history(first);
+        check(std::abs(root_history[0].x-0.5f)<0.0001f,
+              "previous-previous root tracks the older attachment frame");
+        const auto separate=context.diagnostic_read_positions(second);
+        check(separate[0].y==5.0f,
+              "moving one groom cannot modify another groom's roots");
+
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared
