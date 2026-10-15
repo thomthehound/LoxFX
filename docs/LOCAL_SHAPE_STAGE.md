@@ -32,6 +32,8 @@ does not actually loop. LoxFX executes the **intended** iteration count:
 - 64 vertices: one dispatch and an explicit per-guide shader loop over the
   prepared iteration budget, without unnecessary inter-dispatch barriers.
 - Zero iterations or zero stiffness: record no local-shape work.
+- Preparation limits the local-shape iteration budget to 64, preventing
+  accidental unbounded CPU command recording and shader loops.
 
 The implementation uses the existing guide/rest and per-guide motion
 buffers. Vulkan adds a rest-buffer descriptor to the existing shared
