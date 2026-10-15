@@ -68,6 +68,9 @@ public:
     [[nodiscard]] const std::string& device_name() const noexcept;
     [[nodiscard]] bool software_device() const noexcept;
     [[nodiscard]] VkDevice native_device() const noexcept;
+    // For testing explicit borrowed-device construction. Caller keeps
+    // originating device/queue alive and serializes access to its queue.
+    [[nodiscard]] ExternalDevice borrowed_handles() const noexcept;
     [[nodiscard]] std::uint64_t gpu_submission_count() const noexcept;
 
 private:

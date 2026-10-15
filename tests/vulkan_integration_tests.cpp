@@ -103,6 +103,24 @@ int main(int argc,char** argv) {
         check(std::abs(frame2_b[1].y-6.0f)<0.0001f,
               "second groom rest-shape relaxation");
 
+        // Borrowed context uses the same host GPU without taking ownership.
+        // Its destruction must not release the host's physical/logical device.
+        {
+            gpu::DeviceContext borrowed(context.borrowed_handles(),argv[1]);
+            check(borrowed.native_device()==shared,
+                  "borrowed context preserves caller-owned Vulkan device");
+            auto third=borrowed.prepare(*a);
+            const auto recorded=borrowed.begin_diagnostic_commands();
+            borrowed.record_integration(recorded,third,
+                {.time_step=dt,.gravity=gravity,.damping=0},1);
+            borrowed.submit_diagnostic_and_wait();
+            const auto third_after=borrowed.diagnostic_read_positions(third);
+            check(std::abs(third_after[1].y-(1.0f-step))<0.0001f,
+                  "borrowed device performs real compute");
+        }
+        check(context.native_device()==shared,
+              "borrowed context destruction leaves host device intact");
+
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared

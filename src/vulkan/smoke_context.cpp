@@ -262,6 +262,9 @@ struct DeviceContext::Impl {
                     // will not silently switch based on individual grooms.
                     VkQueue selected_queue = VK_NULL_HANDLE;
                     vkGetDeviceQueue(fresh_device, i, 0, &selected_queue);
+                    // Commit the device before any fallible validation.
+                    // The Impl destructor now owns it on every throw path.
+                    device = fresh_device;
                     own_device = true;
                     configure({candidate, fresh_device, selected_queue, i});
                     break;
@@ -582,5 +585,9 @@ VkDevice DeviceContext::native_device()const noexcept{
 }
 std::uint64_t DeviceContext::gpu_submission_count()const noexcept{
     return impl_?impl_->submissions:0;
+}
+ExternalDevice DeviceContext::borrowed_handles()const noexcept{
+    if(!impl_)return {};
+    return {impl_->physical,impl_->device,impl_->queue,impl_->family};
 }
 } // namespace loxfx::vulkan::smoke
