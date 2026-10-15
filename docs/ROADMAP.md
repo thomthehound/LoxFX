@@ -100,7 +100,9 @@ of stage five execute as internal native Vulkan and D3D12 compute passes. PRs #1
 history, and the per-guide motion data. Stage three propagates that motion
 to distal guide vertices; stage four preserves local curvature and implements
 the intended short/64-vertex iteration counts. Full bone-space attachments,
-body/contact collision, tangent completion and follower publication are still required.
+body/contact collision and complete animated skeletal inputs are still required.
+GPU guide/follower positions and final tangents are now published by stage six.
+See [follower publication](FOLLOWER_PUBLICATION_STAGE.md).
 See [animated-root stage](ROOT_MOTION_STAGE.md),
 [strand-level motion](STRAND_MOTION_STAGE.md),
 [velocity-shock stage](VELOCITY_SHOCK_STAGE.md), and
