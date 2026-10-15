@@ -241,8 +241,8 @@ struct DeviceContext::Impl {
                     props.limits.maxComputeWorkGroupSize[0] < 64 ||
                     props.limits.maxComputeWorkGroupInvocations < 64 ||
                     props.limits.maxPushConstantsSize < sizeof(Constants) ||
-                    props.limits.maxDescriptorSetStorageBuffers < 3 ||
-                    props.limits.maxPerStageDescriptorStorageBuffers < 3)
+                    props.limits.maxDescriptorSetStorageBuffers < 4 ||
+                    props.limits.maxPerStageDescriptorStorageBuffers < 4)
                     continue;
                 std::uint32_t count_q = 0;
                 vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count_q, nullptr);
