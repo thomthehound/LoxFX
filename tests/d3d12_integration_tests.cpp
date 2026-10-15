@@ -500,6 +500,75 @@ int main(int argc,char** argv) {
                            "D3D12 64-vertex internal iterations run");
         }
 
+        // Length/wind stage: true guide-parallel odd/even constraints,
+        // source rest lengths, pinned roots, and follower isolation.
+        auto length_asset=fixture(0.0f,1);
+        length_asset.positions[1].w=0.0f;
+        auto prepared=loxfx::prepare_groom(length_asset,
+            {.followers_per_guide=2,.local_shape_iterations=1});
+        require(prepared.has_value(),"prepare length fixture");
+        auto length_gpu=context.prepare_diagnostic(*prepared);
+        auto* cmd=context.begin_diagnostic_commands();
+        context.record_integration(cmd,length_gpu,
+            {.time_step=dt,.gravity=720.0f,.damping=0.0f},1);
+        context.record_strand_level(cmd,length_gpu,
+            {.velocity_shock_coefficient=0.0f,.acceleration_threshold=100.0f});
+        context.record_velocity_shock(cmd,length_gpu);
+        context.record_length_wind(cmd,length_gpu,
+            {.time_step=dt,.length_iterations=4});
+        context.submit_diagnostic_and_wait();
+        const auto length_result=context.diagnostic_read_positions(length_gpu);
+        require(length_result[0].y==0.0f && length_result[1].y==1.0f,
+                 "D3D12 length constraints preserve attached roots");
+        require(std::abs(length_result[2].y-2.0f)<0.0003f &&
+                 std::abs(length_result[3].y-2.975f)<0.0003f,
+                 "D3D12 odd/even shared-memory length solver matches expected positions");
+        require(length_result[4].y==prepared->rest_positions[4].y &&
+                 length_result[8].y==prepared->rest_positions[8].y,
+                 "D3D12 length pass excludes generated followers");
+
+        // Source four-wind blend: at guide zero the two (1-a) winds
+        // contribute, applying force only to movable interior vertices.
+        auto wind_gpu=context.prepare_diagnostic(*prepared);
+        auto* wind_cmd=context.begin_diagnostic_commands();
+        loxfx::LengthWindParameters wind{};
+        wind.time_step=dt;
+        wind.length_iterations=0;
+        wind.winds[1].x=360.0f;
+        context.record_length_wind(wind_cmd,wind_gpu,wind);
+        context.submit_diagnostic_and_wait();
+        const auto wind_result=context.diagnostic_read_positions(wind_gpu);
+        require(std::abs(wind_result[2].x+0.1f)<0.0003f &&
+                 wind_result[3].x==0.0f && wind_result[1].x==0.0f,
+                 "D3D12 four-wind blend moves only interior free vertices");
+
+        // One strand per workgroup at 64 vertices: all group barriers must
+        // remain convergent and outputs must be finite.
+        loxfx::GroomAsset long_length;
+        long_length.guide_strands=1;
+        long_length.vertices_per_strand=64;
+        for(std::uint32_t v=0;v<64;++v)
+            long_length.positions.push_back({0.0f,static_cast<float>(v),0.0f,
+                                             v<2u?0.0f:1.0f});
+        auto long_prepared=loxfx::prepare_groom(long_length,{.followers_per_guide=1});
+        require(long_prepared.has_value(),"prepare 64-vertex length fixture");
+        auto long_gpu=context.prepare_diagnostic(*long_prepared);
+        auto* long_cmd=context.begin_diagnostic_commands();
+        context.record_integration(long_cmd,long_gpu,
+            {.time_step=dt,.gravity=720.0f,.damping=0.0f},1);
+        context.record_strand_level(long_cmd,long_gpu,
+            {.velocity_shock_coefficient=0.0f,.acceleration_threshold=100.0f});
+        context.record_velocity_shock(long_cmd,long_gpu);
+        context.record_length_wind(long_cmd,long_gpu,
+            {.time_step=dt,.length_iterations=3});
+        context.submit_diagnostic_and_wait();
+        const auto long_result=context.diagnostic_read_positions(long_gpu);
+        require(long_result[0].y==0.0f && long_result[1].y==1.0f &&
+                 std::isfinite(long_result[2].y) &&
+                 std::isfinite(long_result[63].y) &&
+                 long_result[64].y==long_prepared->rest_positions[64].y,
+                 "D3D12 long strand length simulation and follower isolation");
+
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
                  <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms
