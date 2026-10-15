@@ -94,18 +94,15 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ### M1 — First complete strand simulation
 
-**Next incremental physics milestone (draft PR #15):** shared
-host-driven root translation and two-root-per-guide previous-previous
-history, providing correctly ordered inputs for source-defined
-`CalculateStrandLevelData`. Full skeletal moving roots, strand-level
-orientation, VSP and additional passes are still outstanding. See
-[animated-root stage](ROOT_MOTION_STAGE.md).
-
-**Draft PR #16:** actual source-derived `CalculateStrandLevelData`
-stage now runs after integration on *both* native GPU backends,
-writing one compact VSP quaternion/translation/coefficient record
-per guide. Skinning rotation stays identity until skeletal attachments
-are implemented. See [strand-level motion](STRAND_MOTION_STAGE.md).
+**GPU stages 1–3:** Integration/global shape, strand-level motion, and
+velocity-shock propagation run as internal native Vulkan and D3D12 compute
+passes. PRs #15 and #16 established translated attachments, compact proximal
+history, and the per-guide motion data; stage three now applies that motion
+to distal guide vertices and updates both current and previous position
+history. Full bone-space attachments, constraints, collision and follower
+publication are still needed. See [animated-root stage](ROOT_MOTION_STAGE.md),
+[strand-level motion](STRAND_MOTION_STAGE.md), and
+[velocity-shock stage](VELOCITY_SHOCK_STAGE.md).
 
 **Architecture milestone:** PR #11 merged the shared-device and command-
 recording proof. PR #14 adds native D3D12 stage-one execution against
