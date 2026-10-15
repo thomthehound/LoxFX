@@ -149,7 +149,7 @@ struct DeviceContext::Impl {
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12RootSignature> root_signature;
     ComPtr<ID3D12PipelineState> pipeline, strand_pipeline, velocity_shock_pipeline,
-                                  local_shape_pipeline;
+                                  local_shape_pipeline, length_wind_pipeline;
     ComPtr<ID3D12RootSignature> strand_root_signature;
     ComPtr<ID3D12CommandAllocator> diagnostic_allocator;
     ComPtr<ID3D12GraphicsCommandList> diagnostic_commands;
@@ -307,7 +307,7 @@ struct DeviceContext::Impl {
         checked(device->CreateComputePipelineState(&pso,
                         IID_PPV_ARGS(pipeline.GetAddressOf())),
                 "create native DXIL compute pipeline");
-        std::array<D3D12_ROOT_PARAMETER,6> strand_roots{};
+        std::array<D3D12_ROOT_PARAMETER,7> strand_roots{};
         for(UINT i=0;i<3;++i){
             strand_roots[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
             strand_roots[i].Descriptor.ShaderRegister=i;
@@ -318,13 +318,16 @@ struct DeviceContext::Impl {
         strand_roots[3].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
         strand_roots[4].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         strand_roots[4].Constants.ShaderRegister=0;
-        strand_roots[4].Constants.Num32BitValues=8;
+        strand_roots[4].Constants.Num32BitValues=24;
         strand_roots[4].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
         // The local-shape shader reads immutable rest vertices at t4.
         // The existing strand and VSP passes need no binding changes.
         strand_roots[5].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;
         strand_roots[5].Descriptor.ShaderRegister=4;
         strand_roots[5].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        strand_roots[6].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;
+        strand_roots[6].Descriptor.ShaderRegister=5;
+        strand_roots[6].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
         D3D12_ROOT_SIGNATURE_DESC strand_desc{};
         strand_desc.NumParameters=static_cast<UINT>(strand_roots.size());
         strand_desc.pParameters=strand_roots.data();
@@ -364,6 +367,14 @@ struct DeviceContext::Impl {
         checked(device->CreateComputePipelineState(&shape_pso,
                 IID_PPV_ARGS(local_shape_pipeline.GetAddressOf())),
                 "create local-shape DXIL compute pipeline");
+        const auto length_dxil=shader_file(path.parent_path()/"loxfx_length_wind.dxil");
+        D3D12_COMPUTE_PIPELINE_STATE_DESC length_pso{};
+        length_pso.pRootSignature=strand_root_signature.Get();
+        length_pso.CS.pShaderBytecode=length_dxil.data();
+        length_pso.CS.BytecodeLength=length_dxil.size();
+        checked(device->CreateComputePipelineState(&length_pso,
+                IID_PPV_ARGS(length_wind_pipeline.GetAddressOf())),
+                "create length-wind DXIL compute pipeline");
 
         checked(device->CreateCommandAllocator(queue_type,
                         IID_PPV_ARGS(diagnostic_allocator.GetAddressOf())),
@@ -436,8 +447,9 @@ struct DeviceContext::Impl {
 struct GroomState::Impl {
     std::shared_ptr<void> context_lifetime;
     const void* context_id = nullptr;
-    ComPtr<ID3D12Resource> current, previous, rest, root_previous_previous, strand_data;
-    std::uint64_t root_history_bytes=0, strand_bytes=0;
+    ComPtr<ID3D12Resource> current, previous, rest, root_previous_previous,
+                           strand_data, guide_rest_lengths;
+    std::uint64_t root_history_bytes=0, strand_bytes=0, guide_length_bytes=0;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
     std::uint32_t local_dispatch_iterations=0, local_shader_iterations=0;
     std::uint64_t bytes=0;
@@ -484,6 +496,8 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
         source.work.packed_guide_strands)*2*sizeof(Float4);
     g->strand_bytes=static_cast<UINT64>(
         source.work.packed_guide_strands)*sizeof(StrandMotionData);
+    g->guide_length_bytes=static_cast<UINT64>(
+        source.work.packed_guide_strands)*source.vertices_per_strand*sizeof(float);
     if(!g->bytes)throw std::invalid_argument("empty prepared hair buffers");
     const auto uav_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     const auto rest_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_NONE);
@@ -491,17 +505,19 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     const auto strand_desc=buffer_desc(g->strand_bytes,
                                         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    const auto length_desc=buffer_desc(g->guide_length_bytes,D3D12_RESOURCE_FLAG_NONE);
     const auto strand_info=impl_->device->GetResourceAllocationInfo(0,1,&strand_desc);
+    const auto length_info=impl_->device->GetResourceAllocationInfo(0,1,&length_desc);
     const auto mutable_info=impl_->device->GetResourceAllocationInfo(0,1,&uav_desc);
     const auto immutable_info=impl_->device->GetResourceAllocationInfo(0,1,&rest_desc);
     const auto history_info=impl_->device->GetResourceAllocationInfo(0,1,&history_desc);
     if(mutable_info.SizeInBytes==UINT64_MAX ||
        immutable_info.SizeInBytes==UINT64_MAX ||
        history_info.SizeInBytes==UINT64_MAX ||
-       strand_info.SizeInBytes==UINT64_MAX)
+       strand_info.SizeInBytes==UINT64_MAX || length_info.SizeInBytes==UINT64_MAX)
         throw std::runtime_error("invalid D3D12 groom buffer allocation requirements");
     g->committed_bytes=2*mutable_info.SizeInBytes+immutable_info.SizeInBytes+
-                       history_info.SizeInBytes+strand_info.SizeInBytes;
+                       history_info.SizeInBytes+strand_info.SizeInBytes+length_info.SizeInBytes;
 
     g->current=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);
