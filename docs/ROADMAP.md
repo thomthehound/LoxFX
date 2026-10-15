@@ -130,8 +130,10 @@ visual parity and actual consumer-GPU performance remain outstanding. See
 - [x] Execute the same first-stage HLSL natively through D3D12 DXIL on WARP,
   with root descriptors/constants, host-controlled command recording,
   explicit fences/timestamps and numerical parity fixtures (PR #14).
-- [ ] Validate both APIs on physical GPUs and with moving attachment roots,
-  then extend source-faithful stage dependency and publication parity.
+- [ ] Implement full animated bone-space attachments, then validate
+  source-faithful stage dependencies and publication on both native APIs.
+- [ ] After follower publication and a minimal visual consumer, qualify
+  full-frame and per-pass GPU timings on representative physical devices.
 - [ ] Build a native GPU executor for the whole source stage chain; the
   work-plan alone does not simulate hair or validate a shader port.
 
@@ -146,8 +148,9 @@ visual parity and actual consumer-GPU performance remain outstanding. See
   deterministic cross-backend fixture and source-reference comparisons.
 - Distinguish authored data from derived per-device representations.
 
-**Gate:** a moving groom runs with plausible, tested dynamics; per-pass and
-whole-frame timings exist on a qualifying physical GPU.
+**Gate:** a complete moving-groom simulation produces testable renderable
+strands on both native backends. Physical-GPU timing and visual-quality
+qualification follow with a meaningful visual consumer.
 
 ### M2 — Robust contact, authoring, integration
 
