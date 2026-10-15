@@ -3,29 +3,53 @@
 
 # LoxFX
 
-LoxFX is an independent, cross-platform hair and fur SDK under development.
-It is intended to provide reusable real-time strand simulation, with optional
-rendering integrations, without requiring a particular game engine.
+LoxFX is an engine-independent, cross-platform hair and fur SDK. It combines
+portable groom processing with real-time GPU strand simulation, using shared
+HLSL across native Vulkan and Direct3D 12 backends. Simulation, rendering,
+and engine integration have separate interfaces and lifecycles.
 
-The project is architecturally independent of AMD TressFX. The original
-TressFX 4.1 implementation remains available in the
-[reference repository](https://github.com/thomthehound/TressFX) for
-source-grounded comparison, benchmarking and selective adoption.
+LoxFX takes a source-grounded approach to AMD TressFX 4.1: retain useful
+algorithms and asset compatibility, improve data layout and execution,
+and evaluate changes against visual quality and full-frame GPU cost. The
+[TressFX reference repository](https://github.com/thomthehound/TressFX)
+provides an independent comparison baseline.
 
-## Current status
+## Implementation
 
-The initial CPU-only core imports TressFX 4.x `.tfx` guide-strand geometry and
-optional attributes without changing authored counts or adding generated
-follow strands. A standalone inspection tool, source-traced simulation dispatch planning,
-one-time prepared strand storage and regression tests are included.
-**First-stage GPU integration now executes in experimental Vulkan and
-D3D12 harnesses**, but the full simulation, rendering and engine
-integration remain incomplete and are not yet exported as SDK APIs.
+| Component | Current capability |
+| --- | --- |
+| Portable core | C++23 asset model, validated TressFX 4.x `.tfx` import, optional attributes, and an installable CMake package |
+| Groom preparation | Persistent strand data, rest geometry, tangents, segment lengths, deterministic followers, and source-aligned GPU work plans |
+| Vulkan | Native compute execution of integration/global-shape and strand-level motion stages, with persistent GPU resources and caller-recorded commands |
+| Direct3D 12 | The same two HLSL stages executed as SM6.6 DXIL through native D3D12, with independent resource binding and command recording |
+| Verification | Windows/Linux core tests, Linux software-Vulkan tests, Windows D3D12 WARP tests, and shared numerical fixtures |
 
-## Build
+The installed SDK currently exports **`LoxFX::Core`**. GPU implementations
+are available as internal integration harnesses while the complete simulation
+pipeline and SDK-facing backend interfaces take shape.
 
-Requires CMake 3.28+ and a C++23 compiler and standard library on Windows or Linux. No graphics
-SDK, GPU runtime, reference implementation or game engine is needed.
+### Simulation pipeline
+
+LoxFX follows the six-stage TressFX guide-strand execution model:
+
+1. **Integration and global shape** — Verlet motion, translated root
+   attachments, pinned roots, and rest-shape relaxation. *Executing.*
+2. **Strand-level motion** — per-guide rotation, translation, and
+   velocity-shock parameters using compact root-position history. *Executing.*
+3. **Velocity-shock propagation** — apply strand-level motion to guides.
+4. **Local shape constraints** — preserve strand curvature and local structure.
+5. **Length, wind, and collision** — constrain and interact with the scene.
+6. **Follower update** — expand simulated guides into renderable hair.
+
+The next milestone is stage-three execution on both APIs, followed by
+the remaining constraints, collision, follower publication, and complete
+skeletal attachments. Physical-GPU profiling and visual comparisons will
+qualify the resulting pipeline.
+
+## Build the core
+
+Requirements: **CMake 3.28+** and a **C++23 compiler and standard library**
+on Windows or Linux. The core requires no GPU SDK or game engine.
 
 ```sh
 cmake -S . -B build -DBUILD_TESTING=ON
@@ -33,111 +57,89 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Inspect a TressFX 4.x groom with `loxfx_tfx_inspect path/to/hair.tfx`.
-To inspect the projected GPU work footprint, pass an optional follower count:
-`loxfx_tfx_inspect path/to/hair.tfx 3`. Add `--prepare` to prepare the
-persistent strand arrays and report their size. Preparation computes
-tangents, segment rest lengths and deterministic follower geometry once,
-not per frame. Printed lane counts are analytic, not GPU timings.
+Inspect an existing TressFX 4.x groom:
 
-Install and consume LoxFX as a standalone CMake package:
+```sh
+loxfx_tfx_inspect path/to/hair.tfx
+loxfx_tfx_inspect path/to/hair.tfx 3 --prepare
+```
+
+The optional follower count and `--prepare` report the prepared strand
+layout, static data footprint, and planned GPU work. Strand preparation
+happens once, outside the simulation frame loop.
+
+Install the core for another CMake project:
 
 ```sh
 cmake --install build --config Release --prefix /path/to/loxfx-install
 ```
 
-Downstream projects can use `find_package(LoxFX CONFIG REQUIRED)` and
-`target_link_libraries(app PRIVATE LoxFX::Core)`. The package exports its
-C++23 requirement. The public ABI is not yet frozen.
+```cmake
+find_package(LoxFX CONFIG REQUIRED)
+target_link_libraries(app PRIVATE LoxFX::Core)
+```
 
-## Optional Vulkan integration milestone
+Point `CMAKE_PREFIX_PATH` at the installation prefix when configuring
+the consumer. The exported target carries the C++23 requirement.
 
-**Architecture review:** the stage-one Vulkan module is a working
-experimental compute harness, **not a shipping runtime API**. The current
-per-groom device ownership has now been replaced with **one shared Vulkan
-context, separate per-groom buffers and caller-recorded command batches**.
-Native D3D12 executes the first two shared HLSL stages alongside Vulkan;
-production scheduler, quality and physical-GPU profiling must still pass
-before either becomes an installed SDK interface. See
-[the GPU runtime architecture decision](docs/GPU_RUNTIME_ARCHITECTURE.md)
-and [issue #13](https://github.com/thomthehound/LoxFX/issues/13).
+## GPU development
 
+The two native backends share simulation mathematics and prepared groom
+semantics while keeping device ownership, resource binding, and command
+submission API-specific. Multiple grooms can share one device context.
+Simulation stages record into caller-supplied commands; the host controls
+submission and synchronization.
 
-The internal Vulkan harness now executes **two** source-derived stages:
-moving-root Verlet/global shape integration and per-guide strand-level
-motion data. Both use persistent GPU resources, host-controlled submission,
-explicit inter-stage barriers and optional diagnostic readback/timestamps.
-**This is not yet a complete six-stage hair simulator**; bone skinning,
-velocity-shock application, constraints, collision and follower publication
-remain pending. See [stage-two scope](docs/STRAND_MOTION_STAGE.md).
+### Vulkan
 
-Build with the Vulkan SDK and an installed DXC executable:
+With the Vulkan SDK and `dxc` available:
 
 ```sh
 cmake -S . -B build/gpu -DLOXFX_BUILD_VULKAN_SMOKE=ON -DBUILD_TESTING=ON
 cmake --build build/gpu --config Release
-ctest --test-dir build/gpu -C Release -R loxfx_vulkan_integration -V
+ctest --test-dir build/gpu -C Release -R loxfx_vulkan_integration --output-on-failure
 ```
 
-The smoke harness is opt-in and not installed. The SDK still exports
-only its neutral `LoxFX::Core` target. CI executes the stage through
-Mesa software Vulkan for functional validation, **not**
-representative GPU performance. Hardware qualification remains required.
-See [stage-one execution notes](docs/VULKAN_STAGE_ONE.md).
+### Direct3D 12
 
-## Direct3D 12 status
-
-Direct3D 12 / Shader Model 6.6 and Vulkan 1.4 are **equal intended production
-backends**. The first stage's simulation input semantics and HLSL algorithm
-are shared. Windows CI compiles the same stage to D3D12 DXIL and Vulkan SPIR-V.
-**Native D3D12 now executes that DXIL through an actual D3D12 compute
-pipeline** in Windows WARP CI, with independent grooms, root descriptors,
-root constants, host-recorded command lists, fence synchronization and
-timestamps. PR #16 also executes the second, per-guide strand-motion stage using the
-same HLSL as Vulkan. This is a functional two-stage proof, not a full
-hair simulator or measured GPU performance comparison.
-
-Build the internal native D3D12 two-stage test with the Windows SDK and DXC:
+On Windows with the Windows SDK and `dxc`:
 
 ```powershell
 cmake -S . -B build/d3d12 -A x64 -DLOXFX_BUILD_D3D12_SMOKE=ON -DBUILD_TESTING=ON
 cmake --build build/d3d12 --config Release
-ctest --test-dir build/d3d12 -C Release -R loxfx_d3d12_integration -V
+ctest --test-dir build/d3d12 -C Release -R loxfx_d3d12_integration --output-on-failure
 ```
 
-The test requests D3D12 **WARP** for repeatable functional verification.
-WARP GPU timestamp measurements are **not** representative performance.
-The experimental library/headers are not installed. Real hardware tests and
-full reference visual/performance comparisons remain necessary.
+CI exercises the Vulkan harness with Mesa software Vulkan and the D3D12
+harness with WARP. These establish functional execution and numerical
+checks; performance qualification uses physical GPUs and matched-quality
+reference scenes.
 
-See the [backend parity contract](docs/BACKEND_PARITY.md). Neither backend
-should introduce incompatible physics behavior or constrain the other to a
-slow fallback.
+## Architecture and roadmap
 
-## Direction
+The design separates authored assets, prepared simulation storage, native
+GPU execution, and optional rendering or engine adapters. **Vulkan 1.4**
+and **D3D12 Shader Model 6.6** are the intended production targets;
+Godot is an early integration consumer, not a dependency.
 
-- Vulkan 1.4 and D3D12 Shader Model 6.6 are the intended shipping GPU floors;
-  feature admission and actual device support are not implemented yet.
-- Preserve the original TressFX behavior and performance strategy where useful;
-  improve constraints, collision, simulation LOD and rendering based on measured
-  consumer-hardware results.
-- Godot is an early consumer, not an SDK dependency.
-- Optional integrations with external physics and rendering systems may be
-  introduced through explicit, independently maintained interfaces.
+The engineering priorities are to complete the six-stage strand simulator,
+validate animated attachments and collision, publish renderable follower
+data, and measure visual quality and full-frame cost before selecting
+further solver, LOD, or rendering optimizations.
 
-See the [engineering roadmap](docs/ROADMAP.md),
-[modernization research](docs/MODERNIZATION_RESEARCH.md),
-[bootstrap audit](docs/BOOTSTRAP_AUDIT.md), and
-[reference audit](docs/TRESSFX_REFERENCE.md), and
-[simulation source/performance trace](docs/SIMULATION_EXECUTION_TRACE.md), and
-[optimization backlog](docs/OPTIMIZATION_BACKLOG.md).
+- [Engineering roadmap](docs/ROADMAP.md)
+- [GPU ownership and execution architecture](docs/GPU_RUNTIME_ARCHITECTURE.md)
+- [D3D12/Vulkan parity contract](docs/BACKEND_PARITY.md)
+- [Reference simulation trace](docs/SIMULATION_EXECUTION_TRACE.md)
+- [Optimization backlog](docs/OPTIMIZATION_BACKLOG.md)
+- [Modernization research](docs/MODERNIZATION_RESEARCH.md)
 
-Contributors and coding agents should follow [AGENTS.md](AGENTS.md),
-including its required record of performance findings and deferred
-optimization work at each substantive handoff.
+Contributors should consult [AGENTS.md](AGENTS.md) for design, validation,
+and review requirements.
 
-## Licensing
+## License
 
-New LoxFX code is Apache-2.0 (see [LICENSE](LICENSE)). Adapted or imported
-TressFX code must retain AMD's MIT license, copyright and attribution.
-The reference repository is not a build dependency.
+LoxFX is licensed under [Apache-2.0](LICENSE). Code adapted from AMD
+TressFX retains its original MIT license and attribution; see
+[NOTICE.md](NOTICE.md). The reference implementation is not a build
+dependency.
