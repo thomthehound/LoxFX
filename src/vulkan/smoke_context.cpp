@@ -36,7 +36,7 @@ void verify(VkResult rc, const char* operation) {
 struct Constants {
     std::uint32_t vertices, followers, guides, reserved = 0;
     float dt, gravity, damping, stiffness, range;
-    float padding[3] = {};
+    float root_translation_x, root_translation_y, root_translation_z;
 };
 static_assert(sizeof(Constants) == 48);
 std::vector<std::uint32_t> load_shader(const std::filesystem::path& path) {
@@ -57,7 +57,10 @@ void validate_parameters(const IntegrationParameters& p) {
         !std::isfinite(p.gravity) || !std::isfinite(p.damping) || p.damping < 0 ||
         !std::isfinite(p.global_stiffness) || p.global_stiffness < 0 ||
         p.global_stiffness > 1 || !std::isfinite(p.global_range) ||
-        p.global_range < 0 || p.global_range > 1)
+        p.global_range < 0 || p.global_range > 1 ||
+        !std::isfinite(p.root_translation_x) ||
+        !std::isfinite(p.root_translation_y) ||
+        !std::isfinite(p.root_translation_z))
         throw std::invalid_argument("invalid integration parameters");
 }
 struct Buffer {
@@ -276,15 +279,15 @@ struct DeviceContext::Impl {
         if (!physical) throw std::runtime_error("no qualified Vulkan compute device");
     }
     void initialize_pipeline(const std::filesystem::path& spirv) {
-        std::array<VkDescriptorSetLayoutBinding,3> bindings{};
-        for (std::uint32_t i=0;i<3;++i) {
+        std::array<VkDescriptorSetLayoutBinding,4> bindings{};
+        for (std::uint32_t i=0;i<4;++i) {
             bindings[i].binding=i;
             bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             bindings[i].descriptorCount=1;
             bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;
         }
         VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        lci.bindingCount=3;
+        lci.bindingCount=static_cast<std::uint32_t>(bindings.size());
         lci.pBindings=bindings.data();
         VkDescriptorSetLayout created_layout=VK_NULL_HANDLE;
         creation_checkpoint();
@@ -398,9 +401,9 @@ struct GroomState::Impl {
     VkDevice device=VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool=VK_NULL_HANDLE;
     VkDescriptorSet set=VK_NULL_HANDLE;
-    Buffer current, previous, rest;
+    Buffer current, previous, rest, root_previous_previous;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0;
-    VkDeviceSize vertex_bytes=0;
+    VkDeviceSize vertex_bytes=0, root_history_bytes=0;
     const void* context_id=nullptr;
     ~Impl() {
         if (device && descriptor_pool)
@@ -415,7 +418,8 @@ GroomState& GroomState::operator=(GroomState&&) noexcept=default;
 std::uint64_t GroomState::allocated_buffer_bytes() const noexcept {
     if(!impl_)return 0;
     return impl_->current.allocation_bytes+impl_->previous.allocation_bytes+
-           impl_->rest.allocation_bytes;
+           impl_->rest.allocation_bytes+
+           impl_->root_previous_previous.allocation_bytes;
 }
 
 DeviceContext::DeviceContext(const std::filesystem::path& spirv)
@@ -436,9 +440,12 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     if(!impl_)throw std::logic_error("moved-from device context");
     check_groom(source);
     const VkDeviceSize bytes=static_cast<VkDeviceSize>(source.rest_positions.size())*sizeof(Float4);
+    const VkDeviceSize root_bytes=static_cast<VkDeviceSize>(
+        source.work.packed_guide_strands)*2*sizeof(Float4);
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(impl_->physical,&props);
     if(bytes>props.limits.maxStorageBufferRange ||
+       root_bytes>props.limits.maxStorageBufferRange ||
        source.work.stages[0].thread_groups>props.limits.maxComputeWorkGroupCount[0])
         throw std::invalid_argument("groom exceeds selected device resource or dispatch limit");
 
@@ -447,6 +454,7 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     groom->device=impl_->device;
     groom->context_id=impl_.get();
     groom->vertex_bytes=bytes;
+    groom->root_history_bytes=root_bytes;
     groom->vertices=source.vertices_per_strand;
     groom->followers=source.followers_per_guide;
     groom->guides=source.work.packed_guide_strands;
@@ -460,8 +468,12 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     groom->rest.create(impl_->physical,impl_->device,bytes,storage|transfer,
                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    groom->root_previous_previous.create(
+        impl_->physical,impl_->device,root_bytes,
+        storage|transfer|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,3};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,4};
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool.maxSets=1;
     pool.poolSizeCount=1;
@@ -480,12 +492,13 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     verify(vkAllocateDescriptorSets(impl_->device,&alloc,&created_set),
            "create groom descriptor set");
     groom->set=created_set;
-    std::array<VkDescriptorBufferInfo,3> info{{
+    std::array<VkDescriptorBufferInfo,4> info{{
        {groom->current.handle,0,bytes},
        {groom->previous.handle,0,bytes},
-       {groom->rest.handle,0,bytes}}};
-    std::array<VkWriteDescriptorSet,3> writes{};
-    for(std::uint32_t i=0;i<3;++i){
+       {groom->rest.handle,0,bytes},
+       {groom->root_previous_previous.handle,0,root_bytes}}};
+    std::array<VkWriteDescriptorSet,4> writes{};
+    for(std::uint32_t i=0;i<4;++i){
         writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet=groom->set;
         writes[i].dstBinding=i;
@@ -493,19 +506,27 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         writes[i].descriptorCount=1;
         writes[i].pBufferInfo=&info[i];
     }
-    vkUpdateDescriptorSets(impl_->device,3,writes.data(),0,nullptr);
+    vkUpdateDescriptorSets(impl_->device,
+        static_cast<std::uint32_t>(writes.size()),writes.data(),0,nullptr);
 
     // One temporary staging image, reclaimed immediately AFTER the explicit
     // initialization submit has completed. Never retained by a groom.
     Buffer staging;
-    staging.create(impl_->physical,impl_->device,bytes,
+    staging.create(impl_->physical,impl_->device,bytes+root_bytes,
                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped=nullptr;
     creation_checkpoint();
-    verify(vkMapMemory(impl_->device,staging.memory,0,bytes,0,&mapped),
+    verify(vkMapMemory(impl_->device,staging.memory,0,bytes+root_bytes,0,&mapped),
            "map initial upload");
     std::memcpy(mapped,source.rest_positions.data(),static_cast<std::size_t>(bytes));
+    auto* roots=reinterpret_cast<Float4*>(static_cast<char*>(mapped)+bytes);
+    for(std::uint32_t guide=0;guide<source.work.packed_guide_strands;++guide){
+        const std::size_t first=static_cast<std::size_t>(guide)*
+            (source.followers_per_guide+1)*source.vertices_per_strand;
+        roots[guide*2]=source.rest_positions[first];
+        roots[guide*2+1]=source.rest_positions[first+1];
+    }
     vkUnmapMemory(impl_->device,staging.memory);
     auto cb=impl_->begin_diagnostics();
     for(VkBuffer dest:{groom->current.handle,groom->previous.handle,groom->rest.handle}) {
@@ -513,6 +534,11 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         copy.size=bytes;
         vkCmdCopyBuffer(cb,staging.handle,dest,1,&copy);
     }
+    VkBufferCopy roots_copy{};
+    roots_copy.srcOffset=bytes;
+    roots_copy.size=root_bytes;
+    vkCmdCopyBuffer(cb,staging.handle,
+                    groom->root_previous_previous.handle,1,&roots_copy);
     memory_barrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,
                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                    VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
@@ -531,7 +557,9 @@ void DeviceContext::record_integration(VkCommandBuffer cb,const GroomState& stat
     const auto& g=*state.impl_;
     const Constants params{g.vertices,g.followers,g.guides,0,
                            p.time_step,p.gravity,p.damping,
-                           p.global_stiffness,p.global_range,{}};
+                           p.global_stiffness,p.global_range,
+                           p.root_translation_x,p.root_translation_y,
+                           p.root_translation_z};
     // Source-derived inter-step dependency, also covers prior frame's writes.
     memory_barrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,
                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
