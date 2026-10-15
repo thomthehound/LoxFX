@@ -431,6 +431,74 @@ int main(int argc,char** argv) {
                   std::abs(mapped_y+1.0f)<0.00005f,
                   "quaternion maps previous direction onto actual new direction");
         }
+        // Stage four: pinned guide roots and source-normalized local stiffness.
+        // One dispatch is enough for an exact numeric straight-rest fixture.
+        auto shape_asset=fixture(0.0f,1);
+        shape_asset.positions[1].w=0.0f;
+        for(std::uint32_t iterations : {1u,3u}) {
+            auto shape_prepared=loxfx::prepare_groom(
+                shape_asset,{.followers_per_guide=1,.local_shape_iterations=iterations});
+            check(shape_prepared.has_value(),"prepare local shape fixture");
+            auto shape_gpu=context.prepare(*shape_prepared);
+            auto shape_cmd=context.begin_diagnostic_commands();
+            context.record_integration(shape_cmd,shape_gpu,
+                {.time_step=dt,.gravity=720.0f,.damping=0.0f},1);
+            context.record_strand_level(shape_cmd,shape_gpu,
+                {.velocity_shock_coefficient=0.0f,.acceleration_threshold=100.0f});
+            context.record_velocity_shock(shape_cmd,shape_gpu);
+            context.record_local_shape(shape_cmd,shape_gpu,1.0f);
+            context.submit_diagnostic_and_wait();
+            const auto result=context.diagnostic_read_positions(shape_gpu);
+            check(result[0].y==0.0f && result[1].y==1.0f &&
+                      result[0].w==0.0f && result[1].w==0.0f,
+                      "Vulkan local shape preserves attached vertices");
+            check(std::abs(result[4].y-shape_prepared->rest_positions[4].y)<0.0001f,
+                      "Vulkan local shape does not simulate followers");
+            if(iterations==1u) {
+                // Source uses 0.5*min(1,0.95)=0.475 stiffness.
+                // Gravity displaces free vertices by 0.2. Sequential
+                // corrections yield y2=1.849875 and y3=2.845125.
+                check(std::abs(result[2].y-1.849875f)<0.0003f &&
+                          std::abs(result[3].y-2.845125f)<0.0003f,
+                          "Vulkan source local-shape correction and vertex order");
+            } else {
+                check(std::abs(result[2].y-1.849875f)>0.0005f,
+                          "Vulkan repeated short-strand shape iterations execute");
+            }
+        }
+        // The 64-vertex path uses one dispatch with an internal iteration
+        // loop; requested extra iterations must not silently be discarded.
+        loxfx::GroomAsset long_asset;
+        long_asset.guide_strands=1;
+        long_asset.vertices_per_strand=64;
+        for(std::uint32_t v=0;v<64;++v)
+            long_asset.positions.push_back({0.0f,static_cast<float>(v),0.0f,
+                                            v<2u?0.0f:1.0f});
+        float long_once=0.0f;
+        for(std::uint32_t iterations : {1u,3u}) {
+            auto long_prepared=loxfx::prepare_groom(
+                long_asset,{.followers_per_guide=1,.local_shape_iterations=iterations});
+            check(long_prepared.has_value(),"prepare long-strand fixture");
+            auto long_gpu=context.prepare(*long_prepared);
+            auto cmd=context.begin_diagnostic_commands();
+            context.record_integration(cmd,long_gpu,
+                {.time_step=dt,.gravity=720.0f,.damping=0.0f},1);
+            context.record_strand_level(cmd,long_gpu,
+                {.velocity_shock_coefficient=0.0f,.acceleration_threshold=100.0f});
+            context.record_velocity_shock(cmd,long_gpu);
+            context.record_local_shape(cmd,long_gpu,1.0f);
+            context.submit_diagnostic_and_wait();
+            const auto result=context.diagnostic_read_positions(long_gpu);
+            check(result[0].y==0.0f && result[1].y==1.0f &&
+                      result[64].y==long_prepared->rest_positions[64].y,
+                      "Vulkan 64-vertex shape preserves roots and follower storage");
+            check(std::isfinite(result[2].y) && std::isfinite(result[63].y),
+                      "Vulkan long-strand local correction stays finite");
+            if(iterations==1u) long_once=result[2].y;
+            else check(std::abs(result[2].y-long_once)>0.0001f,
+                           "Vulkan 64-vertex internal iterations run");
+        }
+
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared
