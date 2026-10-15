@@ -12,6 +12,8 @@ include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+option(LOXFX_ENABLE_VULKAN "Build the Vulkan integration stage and diagnostic runner" OFF)
+
 add_library(loxfx_core STATIC
   src/tfx_import.cpp
   src/simulation_work.cpp
@@ -75,7 +77,8 @@ install(FILES
 
 # First native Vulkan *simulation stage* (opt-in): compile HLSL with DXC.
 # CPU import/SDK builds do not require Vulkan or a shader compiler.
-option(LOXFX_ENABLE_VULKAN "Build the Vulkan integration stage and diagnostic runner" OFF)
+# Option is declared above the generated package config so consumers
+# receive the correct find_dependency(Vulkan) contract.
 if(LOXFX_ENABLE_VULKAN)
   find_package(Vulkan REQUIRED)
   find_program(LOXFX_DXC_EXECUTABLE NAMES dxc dxc.exe REQUIRED)
