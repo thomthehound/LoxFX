@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: Godot adapter compile
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gdextension:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Checkout compatible godot-cpp bindings
+        uses: actions/checkout@v7
+        with:
+          repository: godotengine/godot-cpp
+          ref: master
+          path: external/godot-cpp
+          persist-credentials: false
+      - name: Configure optional GDExtension
+        run: >
+          cmake -S . -B build/godot
+          -DBUILD_TESTING=OFF
+          -DLOXFX_BUILD_TOOLS=OFF
+          -DLOXFX_BUILD_GODOT_ADAPTER=ON
+          -DLOXFX_GODOT_CPP_SOURCE_DIR=${{ github.workspace }}/external/godot-cpp
+          -DGODOTCPP_API_VERSION=4.7
+          -DGODOTCPP_TARGET=template_release
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Compile Godot adapter
+        run: cmake --build build/godot --config Release --target loxfx_godot --parallel 2
+      - name: Descriptor generated for opt-in Godot project
+        shell: bash
+        run: test -s build/godot/loxfx.gdextension
