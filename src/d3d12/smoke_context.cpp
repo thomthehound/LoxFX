@@ -148,7 +148,8 @@ struct DeviceContext::Impl {
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12RootSignature> root_signature;
-    ComPtr<ID3D12PipelineState> pipeline, strand_pipeline, velocity_shock_pipeline;
+    ComPtr<ID3D12PipelineState> pipeline, strand_pipeline, velocity_shock_pipeline,
+                                  local_shape_pipeline;
     ComPtr<ID3D12RootSignature> strand_root_signature;
     ComPtr<ID3D12CommandAllocator> diagnostic_allocator;
     ComPtr<ID3D12GraphicsCommandList> diagnostic_commands;
@@ -306,7 +307,7 @@ struct DeviceContext::Impl {
         checked(device->CreateComputePipelineState(&pso,
                         IID_PPV_ARGS(pipeline.GetAddressOf())),
                 "create native DXIL compute pipeline");
-        std::array<D3D12_ROOT_PARAMETER,5> strand_roots{};
+        std::array<D3D12_ROOT_PARAMETER,6> strand_roots{};
         for(UINT i=0;i<3;++i){
             strand_roots[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
             strand_roots[i].Descriptor.ShaderRegister=i;
@@ -319,6 +320,11 @@ struct DeviceContext::Impl {
         strand_roots[4].Constants.ShaderRegister=0;
         strand_roots[4].Constants.Num32BitValues=8;
         strand_roots[4].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        // The local-shape shader reads immutable rest vertices at t4.
+        // The existing strand and VSP passes need no binding changes.
+        strand_roots[5].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;
+        strand_roots[5].Descriptor.ShaderRegister=4;
+        strand_roots[5].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
         D3D12_ROOT_SIGNATURE_DESC strand_desc{};
         strand_desc.NumParameters=static_cast<UINT>(strand_roots.size());
         strand_desc.pParameters=strand_roots.data();
@@ -350,6 +356,14 @@ struct DeviceContext::Impl {
         checked(device->CreateComputePipelineState(&vsp_pso,
                 IID_PPV_ARGS(velocity_shock_pipeline.GetAddressOf())),
                 "create velocity-shock DXIL compute pipeline");
+        const auto shape_dxil=shader_file(path.parent_path()/"loxfx_local_shape.dxil");
+        D3D12_COMPUTE_PIPELINE_STATE_DESC shape_pso{};
+        shape_pso.pRootSignature=strand_root_signature.Get();
+        shape_pso.CS.pShaderBytecode=shape_dxil.data();
+        shape_pso.CS.BytecodeLength=shape_dxil.size();
+        checked(device->CreateComputePipelineState(&shape_pso,
+                IID_PPV_ARGS(local_shape_pipeline.GetAddressOf())),
+                "create local-shape DXIL compute pipeline");
 
         checked(device->CreateCommandAllocator(queue_type,
                         IID_PPV_ARGS(diagnostic_allocator.GetAddressOf())),
@@ -425,6 +439,7 @@ struct GroomState::Impl {
     ComPtr<ID3D12Resource> current, previous, rest, root_previous_previous, strand_data;
     std::uint64_t root_history_bytes=0, strand_bytes=0;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
+    std::uint32_t local_dispatch_iterations=0, local_shader_iterations=0;
     std::uint64_t bytes=0;
     std::uint64_t committed_bytes=0;
 };
@@ -462,6 +477,8 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
     g->guides=source.work.packed_guide_strands;
     g->groups=source.work.stages[0].thread_groups;
     g->strand_groups=source.work.stages[1].thread_groups;
+    g->local_dispatch_iterations=source.work.stages[3].iterations;
+    g->local_shader_iterations=source.work.shader_local_shape_iterations;
     g->bytes=static_cast<UINT64>(source.rest_positions.size())*sizeof(Float4);
     g->root_history_bytes=static_cast<UINT64>(
         source.work.packed_guide_strands)*2*sizeof(Float4);
@@ -604,6 +621,35 @@ void DeviceContext::record_velocity_shock(ID3D12GraphicsCommandList* cmd,
     cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
     cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
     cmd->Dispatch(g.groups,1,1);
+}
+
+void DeviceContext::record_local_shape(ID3D12GraphicsCommandList* cmd,
+             const GroomState& state,float stiffness) const {
+    if(!impl_||!cmd||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("local-shape pass belongs to another D3D12 context");
+    if(!std::isfinite(stiffness)||stiffness<0.0f||stiffness>1.0f)
+        throw std::invalid_argument("invalid local-shape stiffness");
+    const auto& g=*state.impl_;
+    if(g.local_dispatch_iterations==0 || stiffness==0.0f) return;
+    struct ShapeConstants {
+        std::uint32_t vertices,followers,guides,shader_iterations;
+        float local_stiffness;
+    };
+    const ShapeConstants c{g.vertices,g.followers,g.guides,
+                           g.local_shader_iterations,stiffness};
+    cmd->SetComputeRootSignature(impl_->strand_root_signature.Get());
+    cmd->SetPipelineState(impl_->local_shape_pipeline.Get());
+    cmd->SetComputeRootUnorderedAccessView(0,g.current->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(1,g.previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(2,g.root_previous_previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
+    cmd->SetComputeRootShaderResourceView(5,g.rest->GetGPUVirtualAddress());
+    cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
+    for(std::uint32_t i=0;i<g.local_dispatch_iterations;++i) {
+        // Preserve memory dependencies between repeated short-strand passes.
+        uav_barrier(cmd);
+        cmd->Dispatch(g.strand_groups,1,1);
+    }
 }
 
 ID3D12GraphicsCommandList* DeviceContext::begin_diagnostic_commands(){
