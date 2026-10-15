@@ -40,9 +40,9 @@ struct StrandLevelData {
     float4 vspQuat;
     float4 vspTranslation; // xyz: translation; w: VSP coefficient
 };
-LOXFX_BINDING(0) StructuredBuffer<float4> positions : register(t0, space0);
-LOXFX_BINDING(1) StructuredBuffer<float4> previous_positions : register(t1, space0);
-LOXFX_BINDING(2) StructuredBuffer<float4> root_previous_previous : register(t2, space0);
+LOXFX_BINDING(0) RWStructuredBuffer<float4> positions : register(u0, space0);
+LOXFX_BINDING(1) RWStructuredBuffer<float4> previous_positions : register(u1, space0);
+LOXFX_BINDING(2) RWStructuredBuffer<float4> root_previous_previous : register(u2, space0);
 LOXFX_BINDING(3) RWStructuredBuffer<StrandLevelData> strand_data : register(u3, space0);
 
 float4 between_vectors(float3 old_dir, float3 new_dir) {

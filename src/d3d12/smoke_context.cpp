@@ -308,7 +308,7 @@ struct DeviceContext::Impl {
                 "create native DXIL compute pipeline");
         std::array<D3D12_ROOT_PARAMETER,5> strand_roots{};
         for(UINT i=0;i<3;++i){
-            strand_roots[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;
+            strand_roots[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
             strand_roots[i].Descriptor.ShaderRegister=i;
             strand_roots[i].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
         }
@@ -570,9 +570,9 @@ void DeviceContext::record_strand_level(ID3D12GraphicsCommandList* cmd,
     uav_barrier(cmd);
     cmd->SetComputeRootSignature(impl_->strand_root_signature.Get());
     cmd->SetPipelineState(impl_->strand_pipeline.Get());
-    cmd->SetComputeRootShaderResourceView(0,g.current->GetGPUVirtualAddress());
-    cmd->SetComputeRootShaderResourceView(1,g.previous->GetGPUVirtualAddress());
-    cmd->SetComputeRootShaderResourceView(2,g.root_previous_previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(0,g.current->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(1,g.previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(2,g.root_previous_previous->GetGPUVirtualAddress());
     cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
     cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
     cmd->Dispatch(g.strand_groups,1,1);

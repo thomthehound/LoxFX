@@ -286,8 +286,6 @@ int main(int argc,char** argv) {
               std::abs(anchored_history[1].x-0.25f)<0.0001f,
               "compact history preserves both older rigid attachment positions");
 
-        auto* unused_dummy = static_cast<void*>(nullptr);
-        (void)unused_dummy;
         auto cmd2=context.begin_diagnostic_commands();
         context.record_integration(cmd2,attached_gpu,
             {.time_step=dt,.gravity=gravity,.damping=0,.root_translation_x=1.5f},1);
