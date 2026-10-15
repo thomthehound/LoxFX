@@ -4,6 +4,7 @@
 #pragma once
 
 #include "loxfx/integration_parameters.h"
+#include "loxfx/length_wind.h"
 #include "loxfx/prepared_groom.h"
 #include "loxfx/strand_motion.h"
 #include <d3d12.h>
@@ -58,6 +59,10 @@ public:
     // Caller records integration and strand-level calculation first.
     // Guide-local shape correction, following strand motion and VSP.
     // Stiffness is [0,1]; iterations come from the prepared work plan.
+    // Stage-five length/wind pass; collision is handled separately.
+    void record_length_wind(ID3D12GraphicsCommandList* command_list,
+                            const GroomState& groom,
+                            const LengthWindParameters& parameters) const;
     void record_local_shape(ID3D12GraphicsCommandList* command_list,
                             const GroomState& groom, float stiffness) const;
     void record_velocity_shock(ID3D12GraphicsCommandList* command_list,
