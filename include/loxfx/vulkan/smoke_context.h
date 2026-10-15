@@ -5,6 +5,7 @@
 #pragma once
 #include "loxfx/integration_parameters.h"
 #include "loxfx/prepared_groom.h"
+#include "loxfx/strand_motion.h"
 #include <vulkan/vulkan.h>
 #include <cstdint>
 #include <filesystem>
@@ -58,6 +59,11 @@ public:
     DeviceContext& operator=(const DeviceContext&) = delete;
 
     [[nodiscard]] GroomState prepare(const PreparedGroom& source);
+    // Stage 2 consumes integration outputs; records barrier and one
+    // guide-strand dispatch, with no submit/wait/readback.
+    void record_strand_level(VkCommandBuffer command_buffer,
+                             const GroomState& groom,
+                             const StrandMotionParameters& parameters) const;
     void record_integration(VkCommandBuffer command_buffer,
                             const GroomState& groom,
                             const IntegrationParameters& params,
@@ -69,6 +75,7 @@ public:
     void submit_diagnostic_and_wait();
     [[nodiscard]] std::vector<Float4> diagnostic_read_positions(const GroomState& groom);
     [[nodiscard]] std::vector<Float4> diagnostic_read_root_history(const GroomState& groom);
+    [[nodiscard]] std::vector<StrandMotionData> diagnostic_read_strand_data(const GroomState& groom);
     [[nodiscard]] double last_diagnostic_gpu_milliseconds() const noexcept;
     [[nodiscard]] const std::string& device_name() const noexcept;
     [[nodiscard]] bool software_device() const noexcept;

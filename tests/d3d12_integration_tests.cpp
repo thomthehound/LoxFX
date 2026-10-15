@@ -75,7 +75,7 @@ void submit_host_commands(gpu::DeviceContext& context,
 }
 
 int main(int argc,char** argv) {
-    if(argc!=2)return 2;
+    if(argc!=3)return 2;
     try {
         auto first=loxfx::prepare_groom(fixture(0,1),{.followers_per_guide=1});
         auto second=loxfx::prepare_groom(fixture(5,2),{.followers_per_guide=2});
@@ -293,6 +293,78 @@ int main(int argc,char** argv) {
                 std::abs(anchored_history[1].x-0.25f)<0.0001f,
                 "D3D12 compact history preserves both older attachment positions");
 
+        auto* stage2=context.begin_diagnostic_commands();
+        context.record_integration(stage2,attached_gpu,
+            {.time_step=dt,.gravity=g,.damping=0,.root_translation_x=1.5f},1);
+        context.record_strand_level(stage2,attached_gpu,
+            {.velocity_shock_coefficient=0.25f,.acceleration_threshold=0.1f});
+        context.submit_diagnostic_and_wait();
+        const auto strand=context.diagnostic_read_strand_data(attached_gpu);
+        require(strand.size()==attached_prepared->work.packed_guide_strands,
+                "D3D12 compact guide motion records");
+        require(std::abs(strand[0].vsp_translation_coefficient.x-0.25f)<0.0001f &&
+                std::abs(strand[0].vsp_translation_coefficient.w-1.0f)<0.0001f,
+                "D3D12 motion translation and accelerated VSP coefficient");
+        require(std::abs(strand[0].vsp_quaternion.w-1.0f)<0.0001f &&
+                std::abs(strand[0].skinning_quaternion.w-1.0f)<0.0001f,
+                "D3D12 identity quaternion on translating scalp");
+        auto* again=context.begin_diagnostic_commands();
+        context.record_strand_level(again,attached_gpu,
+            {.velocity_shock_coefficient=0.35f,.acceleration_threshold=100.0f});
+        context.submit_diagnostic_and_wait();
+        const auto below=context.diagnostic_read_strand_data(attached_gpu);
+        require(std::abs(below[0].vsp_translation_coefficient.w-0.35f)<0.0001f,
+                "D3D12 ordinary VSP coefficient below threshold");
+        // Same nonidentity quaternion fixture as Vulkan: gravity rotates a
+        // movable proximal segment from +X toward -Y.
+        auto tilting=fixture(0.0f,1);
+        tilting.positions[1].x=1.0f;
+        tilting.positions[1].y=0.0f;
+        auto tilted_prep=loxfx::prepare_groom(tilting,{.followers_per_guide=1});
+        require(tilted_prep.has_value(),"prepare tilted D3D12 guide");
+        auto tilted_gpu=context.prepare_diagnostic(*tilted_prep);
+        auto* tilt_commands=context.begin_diagnostic_commands();
+        context.record_integration(tilt_commands,tilted_gpu,
+            {.time_step=dt,.gravity=500.0f,.damping=0},1);
+        context.record_strand_level(tilt_commands,tilted_gpu,
+            {.velocity_shock_coefficient=0.42f,.acceleration_threshold=100.0f});
+        context.submit_diagnostic_and_wait();
+        const auto tilt_data=context.diagnostic_read_strand_data(tilted_gpu);
+        require(tilt_data[0].vsp_quaternion.z < -0.04f &&
+                tilt_data[0].vsp_quaternion.z > -0.10f &&
+                std::abs(tilt_data[0].vsp_translation_coefficient.w-0.42f)<0.0001f,
+                "D3D12 quaternion rotates +X toward -Y without coefficient override");
+        // Shared P2 regression fixture with Vulkan: near 180-degree
+        // turns must preserve the real angle and rotate old onto new.
+        for(float transverse : {0.008f,0.007f,-0.007f,0.000087f,0.0f}) {
+            auto hair=fixture(0.0f,1);
+            hair.positions[1].x=transverse;
+            auto prepared=loxfx::prepare_groom(hair,{.followers_per_guide=1});
+            require(prepared.has_value(),"prepare antiparallel D3D12 groom");
+            auto gpu=context.prepare_diagnostic(*prepared);
+            auto* command=context.begin_diagnostic_commands();
+            context.record_integration(command,gpu,
+                {.time_step=dt,.gravity=7200.0f,.damping=0.0f},1);
+            context.record_strand_level(command,gpu,
+                {.velocity_shock_coefficient=0.2f,.acceleration_threshold=100.0f});
+            context.submit_diagnostic_and_wait();
+            const auto motion=context.diagnostic_read_strand_data(gpu);
+            const auto q=motion[0].vsp_quaternion;
+            const float expected_w=std::abs(transverse)/std::sqrt(1.0f+transverse*transverse);
+            require(std::isfinite(q.x)&&std::isfinite(q.y)&&
+                    std::isfinite(q.z)&&std::isfinite(q.w),
+                    "D3D12 near-antiparallel quaternion is finite");
+            require(std::abs(q.w-expected_w)<0.00002f,
+                    "D3D12 near-antiparallel quaternion retains its half-angle");
+            const float old_x=transverse,old_y=1.0f;
+            const float mapped_x=(1-2*(q.y*q.y+q.z*q.z))*old_x+
+                                  2*(q.x*q.y-q.w*q.z)*old_y;
+            const float mapped_y=2*(q.x*q.y+q.w*q.z)*old_x+
+                                  (1-2*(q.x*q.x+q.z*q.z))*old_y;
+            require(std::abs(mapped_x-transverse)<0.00005f &&
+                    std::abs(mapped_y+1.0f)<0.00005f,
+                    "D3D12 quaternion correctly maps old proximal direction onto new");
+        }
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
                  <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms

@@ -145,3 +145,37 @@ rotation, strand-data output and VSP, reset/teleport behavior,
 rendering/publication, frames in flight, physical-GPU performance and
 reference-quality imagery. OPT-001/002/003/009/011 remain tracked.
 No claimed throughput or visual improvement is inferred from software CI.
+
+## PR #16 — independent review checkpoints
+
+Trace quaternion orientation/translation/acceleration against reference
+stage two; check numeric degenerate-root handling, exact three-float4
+layout and per-guide indexing. Require **actual** Vulkan and D3D12
+execution with matching data and threshold fixtures, not shader compilation
+alone. Verify GPU barrier visibility of integration results, no CPU
+submission from stage recorder and no per-follower output allocation.
+Skinning remains identity until full skeletal attachment is present.
+No driver-recovery scope creep or unmeasured speedup claims.
+
+## Review trigger discipline (15 October 2026)
+
+Codex's managed automatic code review may begin only when a draft PR
+becomes **Ready for review**. Marking ready immediately before merging
+can produce perfectly valid reviews that arrive *after* merge. Prefer
+this sequence: independent final source review → green CI on exact code
+head → mark PR ready → allow the configured automatic review to finish
+when available → address any findings → merge after approval. Never
+misrepresent a pending code review as a passed code review, and don't
+require an unavailable bot to block productive work indefinitely.
+
+## Codex P2 correction — PR #16 near-antiparallel quaternions
+
+The first quaternion fallback treated every `dot < -0.9999` as an
+exact reversal. A visually significant 179.2-degree motion could lose
+its true angle and misplace VSP-driven downstream vertices. Corrected
+in canonical HLSL with a cancellation-resistant half-angle calculation,
+retaining an arbitrary-axis fallback only for essentially exact opposite
+vectors. Both native GPU test suites now verify quaternion *action* on
+the old proximal direction for near-180-degree turns, signed axes,
+threshold-adjacent angles and exact reversal. Keep this test in place
+when integrating third-stage velocity shock propagation.

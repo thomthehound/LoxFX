@@ -164,6 +164,7 @@ struct DeviceContext::Impl {
     VkDescriptorSetLayout layout = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipeline strand_pipeline = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkCommandBuffer diagnostic_commands = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
@@ -180,6 +181,7 @@ struct DeviceContext::Impl {
             if (fence) vkDestroyFence(device, fence, nullptr);
             if (queries) vkDestroyQueryPool(device, queries, nullptr);
             if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
+            if (strand_pipeline) vkDestroyPipeline(device, strand_pipeline, nullptr);
             if (pipeline) vkDestroyPipeline(device, pipeline, nullptr);
             if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
             if (layout) vkDestroyDescriptorSetLayout(device, layout, nullptr);
@@ -327,6 +329,22 @@ struct DeviceContext::Impl {
         vkDestroyShaderModule(device,module,nullptr);
         verify(build,"create integration pipeline");
         pipeline=created_pipeline;
+        const auto strand_shader=load_shader(spirv.parent_path()/"loxfx_strand_level.spv");
+        VkShaderModuleCreateInfo strand_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        strand_info.codeSize=strand_shader.size()*sizeof(std::uint32_t);
+        strand_info.pCode=strand_shader.data();
+        VkShaderModule strand_module=VK_NULL_HANDLE;
+        verify(vkCreateShaderModule(device,&strand_info,nullptr,&strand_module),
+               "create strand-level module");
+        sci.module=strand_module;
+        sci.pName="CalculateStrandLevelData";
+        cpi.stage=sci;
+        VkPipeline created_strand=VK_NULL_HANDLE;
+        const VkResult strand_result=vkCreateComputePipelines(
+            device,VK_NULL_HANDLE,1,&cpi,nullptr,&created_strand);
+        vkDestroyShaderModule(device,strand_module,nullptr);
+        verify(strand_result,"create strand-level pipeline");
+        strand_pipeline=created_strand;
 
         VkCommandPoolCreateInfo poolci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolci.queueFamilyIndex=family;
@@ -400,10 +418,10 @@ struct GroomState::Impl {
     std::shared_ptr<void> device_lifetime;
     VkDevice device=VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool=VK_NULL_HANDLE;
-    VkDescriptorSet set=VK_NULL_HANDLE;
-    Buffer current, previous, rest, root_previous_previous;
-    std::uint32_t vertices=0, followers=0, guides=0, groups=0;
-    VkDeviceSize vertex_bytes=0, root_history_bytes=0;
+    VkDescriptorSet set=VK_NULL_HANDLE, strand_set=VK_NULL_HANDLE;
+    Buffer current, previous, rest, root_previous_previous, strand_data;
+    std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
+    VkDeviceSize vertex_bytes=0, root_history_bytes=0, strand_bytes=0;
     const void* context_id=nullptr;
     ~Impl() {
         if (device && descriptor_pool)
@@ -419,7 +437,8 @@ std::uint64_t GroomState::allocated_buffer_bytes() const noexcept {
     if(!impl_)return 0;
     return impl_->current.allocation_bytes+impl_->previous.allocation_bytes+
            impl_->rest.allocation_bytes+
-           impl_->root_previous_previous.allocation_bytes;
+           impl_->root_previous_previous.allocation_bytes+
+           impl_->strand_data.allocation_bytes;
 }
 
 DeviceContext::DeviceContext(const std::filesystem::path& spirv)
@@ -442,10 +461,14 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     const VkDeviceSize bytes=static_cast<VkDeviceSize>(source.rest_positions.size())*sizeof(Float4);
     const VkDeviceSize root_bytes=static_cast<VkDeviceSize>(
         source.work.packed_guide_strands)*2*sizeof(Float4);
+    const VkDeviceSize strand_bytes=static_cast<VkDeviceSize>(
+        source.work.packed_guide_strands)*sizeof(StrandMotionData);
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(impl_->physical,&props);
     if(bytes>props.limits.maxStorageBufferRange ||
        root_bytes>props.limits.maxStorageBufferRange ||
+       strand_bytes>props.limits.maxStorageBufferRange ||
+       source.work.stages[1].thread_groups>props.limits.maxComputeWorkGroupCount[0] ||
        source.work.stages[0].thread_groups>props.limits.maxComputeWorkGroupCount[0])
         throw std::invalid_argument("groom exceeds selected device resource or dispatch limit");
 
@@ -455,6 +478,8 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     groom->context_id=impl_.get();
     groom->vertex_bytes=bytes;
     groom->root_history_bytes=root_bytes;
+    groom->strand_bytes=strand_bytes;
+    groom->strand_groups=source.work.stages[1].thread_groups;
     groom->vertices=source.vertices_per_strand;
     groom->followers=source.followers_per_guide;
     groom->guides=source.work.packed_guide_strands;
@@ -472,10 +497,14 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         impl_->physical,impl_->device,root_bytes,
         storage|transfer|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    groom->strand_data.create(
+        impl_->physical,impl_->device,strand_bytes,
+        storage|transfer|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,4};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,8};
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pool.maxSets=1;
+    pool.maxSets=2;
     pool.poolSizeCount=1;
     pool.pPoolSizes=&size;
     VkDescriptorPool created_pool=VK_NULL_HANDLE;
@@ -485,13 +514,15 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     groom->descriptor_pool=created_pool;
     VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     alloc.descriptorPool=groom->descriptor_pool;
-    alloc.descriptorSetCount=1;
-    alloc.pSetLayouts=&impl_->layout;
-    VkDescriptorSet created_set=VK_NULL_HANDLE;
+    std::array<VkDescriptorSetLayout,2> layouts{impl_->layout,impl_->layout};
+    alloc.descriptorSetCount=static_cast<std::uint32_t>(layouts.size());
+    alloc.pSetLayouts=layouts.data();
+    std::array<VkDescriptorSet,2> sets{VK_NULL_HANDLE,VK_NULL_HANDLE};
     creation_checkpoint();
-    verify(vkAllocateDescriptorSets(impl_->device,&alloc,&created_set),
-           "create groom descriptor set");
-    groom->set=created_set;
+    verify(vkAllocateDescriptorSets(impl_->device,&alloc,sets.data()),
+           "create groom descriptor sets");
+    groom->set=sets[0];
+    groom->strand_set=sets[1];
     std::array<VkDescriptorBufferInfo,4> info{{
        {groom->current.handle,0,bytes},
        {groom->previous.handle,0,bytes},
@@ -506,8 +537,24 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         writes[i].descriptorCount=1;
         writes[i].pBufferInfo=&info[i];
     }
+    std::array<VkDescriptorBufferInfo,4> motion_info{{
+       {groom->current.handle,0,bytes},
+       {groom->previous.handle,0,bytes},
+       {groom->root_previous_previous.handle,0,root_bytes},
+       {groom->strand_data.handle,0,strand_bytes}}};
+    std::array<VkWriteDescriptorSet,4> motion_writes{};
+    for(std::uint32_t i=0;i<4;++i){
+        motion_writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        motion_writes[i].dstSet=groom->strand_set;
+        motion_writes[i].dstBinding=i;
+        motion_writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        motion_writes[i].descriptorCount=1;
+        motion_writes[i].pBufferInfo=&motion_info[i];
+    }
     vkUpdateDescriptorSets(impl_->device,
         static_cast<std::uint32_t>(writes.size()),writes.data(),0,nullptr);
+    vkUpdateDescriptorSets(impl_->device,
+        static_cast<std::uint32_t>(motion_writes.size()),motion_writes.data(),0,nullptr);
 
     // One temporary staging image, reclaimed immediately AFTER the explicit
     // initialization submit has completed. Never retained by a groom.
@@ -577,6 +624,31 @@ void DeviceContext::record_integration(VkCommandBuffer cb,const GroomState& stat
                            VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
     }
 }
+void DeviceContext::record_strand_level(VkCommandBuffer cb,const GroomState& state,
+                                        const StrandMotionParameters& p) const {
+    if(!impl_||!state.impl_||!cb||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("strand pass belongs to another Vulkan context");
+    if(!std::isfinite(p.velocity_shock_coefficient) ||
+       p.velocity_shock_coefficient<0 || p.velocity_shock_coefficient>1 ||
+       !std::isfinite(p.acceleration_threshold) || p.acceleration_threshold<0)
+        throw std::invalid_argument("invalid strand motion parameters");
+    const auto& g=*state.impl_;
+    struct MotionConstants {
+        std::uint32_t vertices, followers, guides, reserved;
+        float coefficient, threshold, padding0, padding1;
+    };
+    const MotionConstants data{g.vertices,g.followers,g.guides,0,
+                               p.velocity_shock_coefficient,p.acceleration_threshold,0,0};
+    memory_barrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+    vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->strand_pipeline);
+    vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipeline_layout,
+                            0,1,&g.strand_set,0,nullptr);
+    vkCmdPushConstants(cb,impl_->pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
+                       0,sizeof(data),&data);
+    vkCmdDispatch(cb,g.strand_groups,1,1);
+}
 VkCommandBuffer DeviceContext::begin_diagnostic_commands(){
     if(!impl_)throw std::logic_error("context was moved");
     return impl_->begin_diagnostics();
@@ -628,6 +700,31 @@ std::vector<Float4> DeviceContext::diagnostic_read_root_history(const GroomState
                    VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_READ_BIT);
     impl_->submit_diagnostics();
     std::vector<Float4> result(static_cast<std::size_t>(bytes)/sizeof(Float4));
+    void* mapped=nullptr;
+    verify(vkMapMemory(impl_->device,staging.memory,0,bytes,0,&mapped),
+           "map diagnostic readback");
+    std::memcpy(result.data(),mapped,static_cast<std::size_t>(bytes));
+    vkUnmapMemory(impl_->device,staging.memory);
+    return result;
+}
+std::vector<StrandMotionData> DeviceContext::diagnostic_read_strand_data(const GroomState& g){
+    if(!impl_||!g.impl_||g.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("diagnostic readback on wrong device context");
+    const auto bytes=g.impl_->strand_bytes;
+    Buffer staging;
+    staging.create(impl_->physical,impl_->device,bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const auto cb=impl_->begin_diagnostics();
+    memory_barrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,
+                   VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+    VkBufferCopy copy{};
+    copy.size=bytes;
+    vkCmdCopyBuffer(cb,g.impl_->strand_data.handle,staging.handle,1,&copy);
+    memory_barrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_READ_BIT);
+    impl_->submit_diagnostics();
+    std::vector<StrandMotionData> result(static_cast<std::size_t>(bytes)/sizeof(StrandMotionData));
     void* mapped=nullptr;
     verify(vkMapMemory(impl_->device,staging.memory,0,bytes,0,&mapped),
            "map diagnostic readback");

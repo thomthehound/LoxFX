@@ -83,3 +83,13 @@ authored `GroomAsset` or `PreparedGroom`.
 Track allocation/dispatch/memory performance opportunities in
 [OPTIMIZATION_BACKLOG.md](OPTIMIZATION_BACKLOG.md). The issue for the
 complete simulator is [#6](https://github.com/thomthehound/LoxFX/issues/6).
+
+## Second-stage shader contract (PR #16)
+
+`shaders/CalculateStrandLevelData.hlsl` is shared by native Vulkan
+SPIR-V and D3D12 SM6.6 DXIL. Reads current/previous packed guide
+positions and compact prior-prior root history; writes a `3 × float4`
+`StrandMotionData` for each padded guide. Vulkan uses a second binding
+set on the same device and a compute-stage barrier; D3D12 uses root UAVs,
+root constants and a UAV barrier. Neither backend submits/waits from
+`record_strand_level`. See [stage record](STRAND_MOTION_STAGE.md).

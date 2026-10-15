@@ -3,6 +3,12 @@
 
 # Animated-root integration and compact motion history — PR #15
 
+**Subsequent development:** PR #16 implements `CalculateStrandLevelData`
+on native Vulkan and D3D12 using this compact history. See
+[the stage-two execution contract](STRAND_MOTION_STAGE.md).
+The descriptions of outstanding work below are the **PR #15 snapshot**,
+not an assertion that stage two is still unimplemented.
+
 Source anchors: TressFX 4.1 `src/Shaders/TressFXSimulation.hlsl`:
 `IntegrationAndGlobalShapeConstraints` at lines 610–666;
 `UpdateFinalVertexPositions` at lines 576–586; and

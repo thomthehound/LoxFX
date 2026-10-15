@@ -5,6 +5,7 @@
 
 #include "loxfx/integration_parameters.h"
 #include "loxfx/prepared_groom.h"
+#include "loxfx/strand_motion.h"
 #include <d3d12.h>
 #include <cstdint>
 #include <filesystem>
@@ -53,6 +54,9 @@ public:
     // Diagnostic upload waits explicitly once; NO per-stage CPU readback.
     [[nodiscard]] GroomState prepare_diagnostic(const PreparedGroom& groom);
     // Backend-native work recording: no queue submission, fence or CPU wait.
+    void record_strand_level(ID3D12GraphicsCommandList* command_list,
+                             const GroomState& groom,
+                             const StrandMotionParameters& parameters) const;
     void record_integration(ID3D12GraphicsCommandList* command_list,
                             const GroomState& groom,
                             const IntegrationParameters& parameters,
@@ -62,6 +66,7 @@ public:
     void submit_diagnostic_and_wait();
     [[nodiscard]] std::vector<Float4> diagnostic_read_positions(const GroomState& groom);
     [[nodiscard]] std::vector<Float4> diagnostic_read_root_history(const GroomState& groom);
+    [[nodiscard]] std::vector<StrandMotionData> diagnostic_read_strand_data(const GroomState& groom);
     [[nodiscard]] double last_diagnostic_gpu_milliseconds() const noexcept;
     [[nodiscard]] std::uint64_t diagnostic_submission_count() const noexcept;
     [[nodiscard]] ID3D12Device* native_device() const noexcept;

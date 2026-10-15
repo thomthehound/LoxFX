@@ -148,7 +148,8 @@ struct DeviceContext::Impl {
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12RootSignature> root_signature;
-    ComPtr<ID3D12PipelineState> pipeline;
+    ComPtr<ID3D12PipelineState> pipeline, strand_pipeline;
+    ComPtr<ID3D12RootSignature> strand_root_signature;
     ComPtr<ID3D12CommandAllocator> diagnostic_allocator;
     ComPtr<ID3D12GraphicsCommandList> diagnostic_commands;
     ComPtr<ID3D12Fence> diagnostic_fence;
@@ -305,6 +306,42 @@ struct DeviceContext::Impl {
         checked(device->CreateComputePipelineState(&pso,
                         IID_PPV_ARGS(pipeline.GetAddressOf())),
                 "create native DXIL compute pipeline");
+        std::array<D3D12_ROOT_PARAMETER,5> strand_roots{};
+        for(UINT i=0;i<3;++i){
+            strand_roots[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
+            strand_roots[i].Descriptor.ShaderRegister=i;
+            strand_roots[i].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        }
+        strand_roots[3].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
+        strand_roots[3].Descriptor.ShaderRegister=3;
+        strand_roots[3].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        strand_roots[4].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        strand_roots[4].Constants.ShaderRegister=0;
+        strand_roots[4].Constants.Num32BitValues=8;
+        strand_roots[4].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        D3D12_ROOT_SIGNATURE_DESC strand_desc{};
+        strand_desc.NumParameters=static_cast<UINT>(strand_roots.size());
+        strand_desc.pParameters=strand_roots.data();
+        ComPtr<ID3DBlob> strand_blob,strand_errors;
+        const HRESULT strand_hr=D3D12SerializeRootSignature(
+            &strand_desc,D3D_ROOT_SIGNATURE_VERSION_1,
+            strand_blob.GetAddressOf(),strand_errors.GetAddressOf());
+        if(FAILED(strand_hr)&&strand_errors)
+            throw std::runtime_error(std::string("strand root signature: ")+
+                static_cast<const char*>(strand_errors->GetBufferPointer()));
+        checked(strand_hr,"serialize strand root signature");
+        checked(device->CreateRootSignature(0,strand_blob->GetBufferPointer(),
+                strand_blob->GetBufferSize(),
+                IID_PPV_ARGS(strand_root_signature.GetAddressOf())),
+                "create strand root signature");
+        const auto strand_dxil=shader_file(path.parent_path()/"loxfx_strand_level.dxil");
+        D3D12_COMPUTE_PIPELINE_STATE_DESC strand_pso{};
+        strand_pso.pRootSignature=strand_root_signature.Get();
+        strand_pso.CS.pShaderBytecode=strand_dxil.data();
+        strand_pso.CS.BytecodeLength=strand_dxil.size();
+        checked(device->CreateComputePipelineState(&strand_pso,
+                IID_PPV_ARGS(strand_pipeline.GetAddressOf())),
+                "create strand-level DXIL compute pipeline");
 
         checked(device->CreateCommandAllocator(queue_type,
                         IID_PPV_ARGS(diagnostic_allocator.GetAddressOf())),
@@ -377,9 +414,9 @@ struct DeviceContext::Impl {
 struct GroomState::Impl {
     std::shared_ptr<void> context_lifetime;
     const void* context_id = nullptr;
-    ComPtr<ID3D12Resource> current, previous, rest, root_previous_previous;
-    std::uint64_t root_history_bytes=0;
-    std::uint32_t vertices=0, followers=0, guides=0, groups=0;
+    ComPtr<ID3D12Resource> current, previous, rest, root_previous_previous, strand_data;
+    std::uint64_t root_history_bytes=0, strand_bytes=0;
+    std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
     std::uint64_t bytes=0;
     std::uint64_t committed_bytes=0;
 };
@@ -416,23 +453,30 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
     g->followers=source.followers_per_guide;
     g->guides=source.work.packed_guide_strands;
     g->groups=source.work.stages[0].thread_groups;
+    g->strand_groups=source.work.stages[1].thread_groups;
     g->bytes=static_cast<UINT64>(source.rest_positions.size())*sizeof(Float4);
     g->root_history_bytes=static_cast<UINT64>(
         source.work.packed_guide_strands)*2*sizeof(Float4);
+    g->strand_bytes=static_cast<UINT64>(
+        source.work.packed_guide_strands)*sizeof(StrandMotionData);
     if(!g->bytes)throw std::invalid_argument("empty prepared hair buffers");
     const auto uav_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     const auto rest_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_NONE);
     const auto history_desc=buffer_desc(g->root_history_bytes,
                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    const auto strand_desc=buffer_desc(g->strand_bytes,
+                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    const auto strand_info=impl_->device->GetResourceAllocationInfo(0,1,&strand_desc);
     const auto mutable_info=impl_->device->GetResourceAllocationInfo(0,1,&uav_desc);
     const auto immutable_info=impl_->device->GetResourceAllocationInfo(0,1,&rest_desc);
     const auto history_info=impl_->device->GetResourceAllocationInfo(0,1,&history_desc);
     if(mutable_info.SizeInBytes==UINT64_MAX ||
        immutable_info.SizeInBytes==UINT64_MAX ||
-       history_info.SizeInBytes==UINT64_MAX)
+       history_info.SizeInBytes==UINT64_MAX ||
+       strand_info.SizeInBytes==UINT64_MAX)
         throw std::runtime_error("invalid D3D12 groom buffer allocation requirements");
     g->committed_bytes=2*mutable_info.SizeInBytes+immutable_info.SizeInBytes+
-                       history_info.SizeInBytes;
+                       history_info.SizeInBytes+strand_info.SizeInBytes;
 
     g->current=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);
@@ -443,6 +487,10 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
     g->root_previous_previous=allocate_buffer(
               impl_->device.Get(),g->root_history_bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);
+    g->strand_data=allocate_buffer(
+              impl_->device.Get(),g->strand_bytes,D3D12_HEAP_TYPE_DEFAULT,
+              D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+              D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     auto upload=allocate_buffer(impl_->device.Get(),g->bytes+g->root_history_bytes,D3D12_HEAP_TYPE_UPLOAD,
               D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_GENERIC_READ);
     void* mapped=nullptr;
@@ -504,6 +552,31 @@ void DeviceContext::record_integration(ID3D12GraphicsCommandList* cmd,
     }
 }
 
+void DeviceContext::record_strand_level(ID3D12GraphicsCommandList* cmd,
+             const GroomState& state,const StrandMotionParameters& p) const {
+    if(!impl_||!cmd||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("strand pass belongs to another D3D12 context");
+    if(!std::isfinite(p.velocity_shock_coefficient) ||
+       p.velocity_shock_coefficient<0 || p.velocity_shock_coefficient>1 ||
+       !std::isfinite(p.acceleration_threshold) || p.acceleration_threshold<0)
+        throw std::invalid_argument("invalid strand motion parameters");
+    const auto& g=*state.impl_;
+    struct MotionConstants {
+        std::uint32_t vertices,followers,guides,reserved;
+        float coefficient,threshold,padding0,padding1;
+    };
+    const MotionConstants c{g.vertices,g.followers,g.guides,0,
+                            p.velocity_shock_coefficient,p.acceleration_threshold,0,0};
+    uav_barrier(cmd);
+    cmd->SetComputeRootSignature(impl_->strand_root_signature.Get());
+    cmd->SetPipelineState(impl_->strand_pipeline.Get());
+    cmd->SetComputeRootUnorderedAccessView(0,g.current->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(1,g.previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(2,g.root_previous_previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
+    cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
+    cmd->Dispatch(g.strand_groups,1,1);
+}
 ID3D12GraphicsCommandList* DeviceContext::begin_diagnostic_commands(){
     if(!impl_)throw std::logic_error("device context was moved");
     return impl_->begin();
@@ -551,6 +624,30 @@ std::vector<Float4> DeviceContext::diagnostic_read_root_history(const GroomState
                                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     impl_->submit();
     std::vector<Float4> result(static_cast<std::size_t>(history_bytes)/sizeof(Float4));
+    void* mapped=nullptr;
+    D3D12_RANGE reading{0,static_cast<SIZE_T>(history_bytes)};
+    checked(readback->Map(0,&reading,&mapped),"map D3D12 position readback");
+    std::memcpy(result.data(),mapped,static_cast<std::size_t>(history_bytes));
+    D3D12_RANGE none{0,0};
+    readback->Unmap(0,&none);
+    return result;
+}
+std::vector<StrandMotionData> DeviceContext::diagnostic_read_strand_data(const GroomState& state){
+    if(!impl_||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("readback from unrelated D3D12 context");
+    const auto& g=*state.impl_;
+    const UINT64 history_bytes=g.strand_bytes;
+    auto readback=allocate_buffer(impl_->device.Get(),history_bytes,
+                    D3D12_HEAP_TYPE_READBACK,D3D12_RESOURCE_FLAG_NONE,
+                    D3D12_RESOURCE_STATE_COPY_DEST);
+    auto* cmd=impl_->begin();
+    transition(cmd,g.strand_data.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                     D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cmd->CopyBufferRegion(readback.Get(),0,g.strand_data.Get(),0,history_bytes);
+    transition(cmd,g.strand_data.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    impl_->submit();
+    std::vector<StrandMotionData> result(static_cast<std::size_t>(history_bytes)/sizeof(StrandMotionData));
     void* mapped=nullptr;
     D3D12_RANGE reading{0,static_cast<SIZE_T>(history_bytes)};
     checked(readback->Map(0,&reading,&mapped),"map D3D12 position readback");
