@@ -149,7 +149,7 @@ struct DeviceContext::Impl {
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12RootSignature> root_signature;
     ComPtr<ID3D12PipelineState> pipeline, strand_pipeline, velocity_shock_pipeline,
-                                  local_shape_pipeline, length_wind_pipeline;
+                                  local_shape_pipeline, length_wind_pipeline, follower_pipeline;
     ComPtr<ID3D12RootSignature> strand_root_signature;
     ComPtr<ID3D12CommandAllocator> diagnostic_allocator;
     ComPtr<ID3D12GraphicsCommandList> diagnostic_commands;
@@ -307,7 +307,7 @@ struct DeviceContext::Impl {
         checked(device->CreateComputePipelineState(&pso,
                         IID_PPV_ARGS(pipeline.GetAddressOf())),
                 "create native DXIL compute pipeline");
-        std::array<D3D12_ROOT_PARAMETER,7> strand_roots{};
+        std::array<D3D12_ROOT_PARAMETER,8> strand_roots{};
         for(UINT i=0;i<3;++i){
             strand_roots[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
             strand_roots[i].Descriptor.ShaderRegister=i;
@@ -328,6 +328,9 @@ struct DeviceContext::Impl {
         strand_roots[6].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;
         strand_roots[6].Descriptor.ShaderRegister=5;
         strand_roots[6].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        strand_roots[7].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
+        strand_roots[7].Descriptor.ShaderRegister=6;
+        strand_roots[7].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
         D3D12_ROOT_SIGNATURE_DESC strand_desc{};
         strand_desc.NumParameters=static_cast<UINT>(strand_roots.size());
         strand_desc.pParameters=strand_roots.data();
@@ -375,6 +378,14 @@ struct DeviceContext::Impl {
         checked(device->CreateComputePipelineState(&length_pso,
                 IID_PPV_ARGS(length_wind_pipeline.GetAddressOf())),
                 "create length-wind DXIL compute pipeline");
+        const auto follower_dxil=shader_file(path.parent_path()/"loxfx_follower_publish.dxil");
+        D3D12_COMPUTE_PIPELINE_STATE_DESC follower_pso{};
+        follower_pso.pRootSignature=strand_root_signature.Get();
+        follower_pso.CS.pShaderBytecode=follower_dxil.data();
+        follower_pso.CS.BytecodeLength=follower_dxil.size();
+        checked(device->CreateComputePipelineState(&follower_pso,
+                IID_PPV_ARGS(follower_pipeline.GetAddressOf())),
+                "create follower publication DXIL compute pipeline");
 
         checked(device->CreateCommandAllocator(queue_type,
                         IID_PPV_ARGS(diagnostic_allocator.GetAddressOf())),
@@ -448,7 +459,7 @@ struct GroomState::Impl {
     std::shared_ptr<void> context_lifetime;
     const void* context_id = nullptr;
     ComPtr<ID3D12Resource> current, previous, rest, root_previous_previous,
-                           strand_data, guide_rest_lengths;
+                           strand_data, guide_rest_lengths, tangents;
     std::uint64_t root_history_bytes=0, strand_bytes=0, guide_length_bytes=0;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
     std::uint32_t local_dispatch_iterations=0, local_shader_iterations=0;
@@ -517,7 +528,8 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
        strand_info.SizeInBytes==UINT64_MAX || length_info.SizeInBytes==UINT64_MAX)
         throw std::runtime_error("invalid D3D12 groom buffer allocation requirements");
     g->committed_bytes=2*mutable_info.SizeInBytes+immutable_info.SizeInBytes+
-                       history_info.SizeInBytes+strand_info.SizeInBytes+length_info.SizeInBytes;
+                       history_info.SizeInBytes+strand_info.SizeInBytes+length_info.SizeInBytes+
+                       mutable_info.SizeInBytes;
 
     g->current=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);
@@ -535,6 +547,9 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
     g->guide_rest_lengths=allocate_buffer(impl_->device.Get(),g->guide_length_bytes,
                D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_FLAG_NONE,
                D3D12_RESOURCE_STATE_COPY_DEST);
+    g->tangents=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_DEFAULT,
+               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+               D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     auto upload=allocate_buffer(impl_->device.Get(),g->bytes+g->root_history_bytes+
                g->guide_length_bytes,D3D12_HEAP_TYPE_UPLOAD,
               D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -715,6 +730,29 @@ void DeviceContext::record_length_wind(ID3D12GraphicsCommandList* cmd,
     cmd->SetComputeRootShaderResourceView(5,g.rest->GetGPUVirtualAddress());
     cmd->SetComputeRootShaderResourceView(6,g.guide_rest_lengths->GetGPUVirtualAddress());
     cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
+    cmd->Dispatch(g.groups,1,1);
+}
+
+void DeviceContext::record_followers(ID3D12GraphicsCommandList* cmd,
+                                      const GroomState& state) const {
+    if(!impl_||!cmd||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("follower pass belongs to another D3D12 context");
+    const auto& g=*state.impl_;
+    struct FollowerConstants {
+        std::uint32_t vertices,followers,guides,reserved;
+    };
+    const FollowerConstants data{g.vertices,g.followers,g.guides,0};
+    uav_barrier(cmd);
+    cmd->SetComputeRootSignature(impl_->strand_root_signature.Get());
+    cmd->SetPipelineState(impl_->follower_pipeline.Get());
+    cmd->SetComputeRootUnorderedAccessView(0,g.current->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(1,g.previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(2,g.root_previous_previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
+    cmd->SetComputeRootShaderResourceView(5,g.rest->GetGPUVirtualAddress());
+    cmd->SetComputeRootShaderResourceView(6,g.guide_rest_lengths->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(7,g.tangents->GetGPUVirtualAddress());
+    cmd->SetComputeRoot32BitConstants(4,sizeof(data)/4,&data,0);
     cmd->Dispatch(g.groups,1,1);
 }
 
