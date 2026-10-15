@@ -76,10 +76,32 @@ bool LoxFXGroom3D::load_tfx_bytes(const PackedByteArray& tfx,
              String(prepared.error().c_str()));
         return false;
     }
+    // Godot's packed arrays and surface byte regions are indexed with a
+    // signed 32-bit count. Reject out-of-range prepared geometries before
+    // converting or resizing, even though LoxFX's native 32-bit work index
+    // permits a larger range.
+    const std::uint64_t points_count = prepared->work.packed_total_vertices;
+    const std::uint64_t visible_strands =
+        static_cast<std::uint64_t>(prepared->authored_guide_strands) *
+        (prepared->followers_per_guide + 1u);
+    const std::uint64_t line_vertices =
+        visible_strands * (prepared->vertices_per_strand - 1u) * 2u;
+    if (points_count > static_cast<std::uint64_t>(
+            std::numeric_limits<std::int32_t>::max()) ||
+        line_vertices > static_cast<std::uint64_t>(
+            std::numeric_limits<std::int32_t>::max())) {
+        fail("LoxFX: prepared groom exceeds Godot diagnostic geometry limits");
+        return false;
+    }
     // Replacing the scene geometry is intentionally separate from preparing
     // the neutral asset. No native Vulkan/D3D12 handles enter this node.
     PackedVector3Array initial;
     initial.resize(static_cast<std::int64_t>(prepared->rest_positions.size()));
+    if (initial.size() != static_cast<std::int64_t>(
+            prepared->rest_positions.size())) {
+        fail("LoxFX: unable to allocate prepared diagnostic points");
+        return false;
+    }
     for (std::int64_t i = 0; i < initial.size(); ++i) {
         const auto& p = prepared->rest_positions[static_cast<std::size_t>(i)];
         initial.set(i, Vector3(p.x, p.y, p.z));
@@ -88,7 +110,6 @@ bool LoxFXGroom3D::load_tfx_bytes(const PackedByteArray& tfx,
     const auto previous_lines = lines_;
     groom_ = std::move(*prepared);
     lines_.instantiate();
-    displayed_guide_count_ = groom_->authored_guide_strands;
     if (!update_lines(initial, true)) {
         groom_ = std::move(previous);
         lines_ = previous_lines;
@@ -119,6 +140,10 @@ bool LoxFXGroom3D::update_lines(
     }
     PackedVector3Array vertices;
     vertices.resize(static_cast<std::int64_t>(line_vertices));
+    if (vertices.size() != static_cast<std::int64_t>(line_vertices)) {
+        fail("LoxFX: unable to allocate diagnostic line vertices");
+        return false;
+    }
     std::int64_t cursor = 0;
     Vector3 minimum;
     Vector3 maximum;
@@ -151,6 +176,10 @@ bool LoxFXGroom3D::update_lines(
         arrays[Mesh::ARRAY_VERTEX] = vertices;
         lines_->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, arrays,
                 Array(), Dictionary(), Mesh::ARRAY_FLAG_USE_DYNAMIC_UPDATE);
+        if (lines_->get_surface_count() != 1) {
+            fail("LoxFX: Godot refused to create the diagnostic line surface");
+            return false;
+        }
     } else {
         // This CPU->Godot update path is for visual diagnostics, not a
         // production renderer or a trustworthy full-frame benchmark.
@@ -177,6 +206,8 @@ PackedVector3Array LoxFXGroom3D::get_initial_positions() const {
     PackedVector3Array positions;
     if (!groom_) return positions;
     positions.resize(static_cast<std::int64_t>(groom_->rest_positions.size()));
+    if (positions.size() != static_cast<std::int64_t>(
+            groom_->rest_positions.size())) return {};
     for (std::int64_t i = 0; i < positions.size(); ++i) {
         const auto& p = groom_->rest_positions[static_cast<std::size_t>(i)];
         positions.set(i, Vector3(p.x, p.y, p.z));
