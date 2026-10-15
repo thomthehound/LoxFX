@@ -244,6 +244,13 @@ throughput. **Status:** blocked until multi-groom runtime and GPU profiling.
 - **2026-10-15, PR #3:** Deterministic prepared interleaved follower data,
   real Ratboy smoke tests and static upload sizes. Retain current
   correctness path until GPU buffer consumers are audited (OPT-001/002).
+- **2026-10-15, native D3D12 stage-one PR #14:** The shared HLSL now
+  executes through actual D3D12 compute with three persistent committed
+  per-groom buffers, root SRV/UAV descriptors and root constants, so this
+  stage uses **no descriptor heap or per-dispatch constant-buffer upload**.
+  Compare full-frame costs with Vulkan only on physical GPUs (OPT-003/009).
+  Dedicated per-groom committed resources remain an OPT-011 profiling
+  opportunity; all follower memory questions remain OPT-001/002.
 - **2026-10-15, architecture remediation:** Replaced the per-groom
   device-owning runtime with an internal shared/borrowed Vulkan context,
   record-only integration, two-groom CI and temporary setup/readback staging.

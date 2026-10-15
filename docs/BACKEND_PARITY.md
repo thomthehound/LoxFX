@@ -3,9 +3,12 @@
 
 # D3D12 / Vulkan backend parity contract
 
-**Status: Vulkan stage-one execution demonstrated; same HLSL compiled to
-D3D12 SM6.6 DXIL but no native D3D12 executor yet.** Source code, timing
-and dispatch semantics must ultimately agree across both APIs.
+**Status: both Vulkan SPIR-V and native D3D12 SM6.6 DXIL now execute the
+same first-stage HLSL** in separate GPU API runtimes. Linux software Vulkan
+and Windows D3D12 WARP are functional tests, not physical GPU performance
+measurements. Both runtimes remain internal, not installed SDK APIs.
+Source code, timing and dispatch semantics must ultimately agree across
+both APIs. Native full-six-stage execution is still incomplete.
 
 Before building more Vulkan-only stages, apply the explicit
 [device/context/recording contract](GPU_RUNTIME_ARCHITECTURE.md).
@@ -39,10 +42,10 @@ choice of a private graphics device and blocking submission per groom.
 | Concept | Vulkan (SPIR-V) | D3D12 (DXIL) |
 | --- | --- | --- |
 | HLSL | `shaders/IntegrationAndGlobalShapeConstraints.hlsl` | **Same file**, SM6.6 |
-| Parameters | 48-byte push constants | `b0, space0` constant buffer |
-| Position buffer | set 0, binding 0, storage read/write | `u0, space0` UAV |
-| Previous position buffer | set 0, binding 1, storage read/write | `u1, space0` UAV |
-| Rest position buffer | set 0, binding 2, storage read-only | `t2, space0` SRV |
+| Parameters | 48-byte push constants | `b0, space0` mapped to 12 root DWORD constants (no CBV buffer) |
+| Position buffer | set 0, binding 0, storage read/write | `u0, space0` root UAV descriptor |
+| Previous position buffer | set 0, binding 1, storage read/write | `u1, space0` root UAV descriptor |
+| Rest position buffer | set 0, binding 2, storage read-only | `t2, space0` root SRV descriptor |
 | Workgroups | 64 threads | 64 threads |
 | Work scheduling | Vulkan compute commands | D3D12 compute command lists |
 
@@ -53,16 +56,15 @@ authored `GroomAsset` or `PreparedGroom`.
 
 ## Rollout and acceptance gates
 
-1. **Shader parity (current PR):** Windows CI compiles the one canonical
-   stage to both SPIR-V and DXIL, and executes SPIR-V via Mesa on Linux.
-   This is compile-time compatibility, not a D3D12 execution proof.
-2. **Native D3D12 first-stage execution (next):** Implement C++23 D3D12
-   device/resource creation, upload, UAV/SRV/CBV binding, root signature,
-   dispatch, UAV barriers, fence completion and GPU timestamps. Validate
-   identical multi-step rooted guide motion with a native D3D12 test.
-   Add `windows-latest` D3D12 execution CI if WARP supports the required
-   feature set; otherwise document the capability and use physical GPU
-   qualification. Do not incorrectly claim WARP performance equivalence.
+1. **Shader parity (done):** Windows CI compiles the canonical stage into
+   Vulkan SPIR-V and D3D12 SM6.6 DXIL.
+2. **Native D3D12 first-stage execution (PR #14):** Windows WARP executes
+   actual D3D12 compute with persistent groom resources, root UAV/SRV
+   descriptors, root constants, compute/direct command lists, UAV barriers,
+   fences and timestamps. Two independent grooms reproduce the Vulkan
+   fixture's numerical behavior, including externally submitted work.
+   **The native D3D12 runtime remains a non-exported experimental harness.**
+   WARP is not a physical GPU performance baseline.
 3. **Six-stage parity:** Port each subsequent solver stage to shared HLSL
    first; update Vulkan/D3D12 execution contracts and tests together.
    Audit full source task/queue/dataflow ownership before making changes.

@@ -17,8 +17,10 @@ source-grounded comparison, benchmarking and selective adoption.
 The initial CPU-only core imports TressFX 4.x `.tfx` guide-strand geometry and
 optional attributes without changing authored counts or adding generated
 follow strands. A standalone inspection tool, source-traced simulation dispatch planning,
-one-time prepared strand storage and regression tests are included. **Hair simulation, GPU execution, rendering and engine
-integration are not implemented in this initial milestone.**
+one-time prepared strand storage and regression tests are included.
+**First-stage GPU integration now executes in experimental Vulkan and
+D3D12 harnesses**, but the full simulation, rendering and engine
+integration remain incomplete and are not yet exported as SDK APIs.
 
 ## Build
 
@@ -54,8 +56,9 @@ C++23 requirement. The public ABI is not yet frozen.
 experimental compute harness, **not a shipping runtime API**. The current
 per-groom device ownership has now been replaced with **one shared Vulkan
 context, separate per-groom buffers and caller-recorded command batches**.
-Native D3D12 runtime execution, production scheduler validation and hardware
-profiling still remain before this becomes an installed SDK interface. See
+Native D3D12 stage-one execution is now being validated alongside Vulkan;
+production scheduler, quality and physical-GPU profiling must still pass
+before either becomes an installed SDK interface. See
 [the GPU runtime architecture decision](docs/GPU_RUNTIME_ARCHITECTURE.md)
 and [issue #13](https://github.com/thomthehound/LoxFX/issues/13).
 
@@ -85,9 +88,24 @@ See [stage-one execution notes](docs/VULKAN_STAGE_ONE.md).
 
 Direct3D 12 / Shader Model 6.6 and Vulkan 1.4 are **equal intended production
 backends**. The first stage's simulation input semantics and HLSL algorithm
-are shared. Windows CI compiles the exact same stage to D3D12 DXIL and Vulkan
-SPIR-V. **DXIL compilation is not a D3D12 runtime**; native D3D12 resource,
-root-signature, command-list, fence and GPU timestamp execution must follow.
+are shared. Windows CI compiles the same stage to D3D12 DXIL and Vulkan SPIR-V.
+**Native D3D12 now executes that DXIL through an actual D3D12 compute
+pipeline** in Windows WARP CI, with independent grooms, root descriptors,
+root constants, host-recorded command lists, fence synchronization and
+timestamps. This is first-stage functionality, not a complete simulator.
+
+Build the internal native D3D12 stage-one test with the Windows SDK and DXC:
+
+```powershell
+cmake -S . -B build/d3d12 -A x64 -DLOXFX_BUILD_D3D12_SMOKE=ON -DBUILD_TESTING=ON
+cmake --build build/d3d12 --config Release
+ctest --test-dir build/d3d12 -C Release -R loxfx_d3d12_integration -V
+```
+
+The test requests D3D12 **WARP** for repeatable functional verification.
+WARP GPU timestamp measurements are **not** representative performance.
+The experimental library/headers are not installed. Real hardware tests and
+full reference visual/performance comparisons remain necessary.
 
 See the [backend parity contract](docs/BACKEND_PARITY.md). Neither backend
 should introduce incompatible physics behavior or constrain the other to a
