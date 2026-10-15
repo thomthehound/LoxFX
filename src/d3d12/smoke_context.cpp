@@ -155,6 +155,7 @@ struct DeviceContext::Impl {
     double last_ms = -1;
     std::uint64_t diagnostic_submissions = 0;
     bool diagnostic_active = false, software = false;
+    D3D12_COMMAND_LIST_TYPE queue_type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
     std::string name;
 
     void create_standalone(AdapterChoice choice) {
@@ -177,9 +178,16 @@ struct DeviceContext::Impl {
                 if (SUCCEEDED(D3D12CreateDevice(candidate.Get(),
                                 D3D_FEATURE_LEVEL_12_0,
                                 IID_PPV_ARGS(probe.GetAddressOf())))) {
-                    adapter = std::move(candidate);
-                    device = std::move(probe);
-                    break;
+                    D3D12_FEATURE_DATA_SHADER_MODEL shader_model{};
+                    shader_model.HighestShaderModel = D3D_SHADER_MODEL_6_6;
+                    if (SUCCEEDED(probe->CheckFeatureSupport(
+                            D3D12_FEATURE_SHADER_MODEL,
+                            &shader_model, sizeof(shader_model))) &&
+                        shader_model.HighestShaderModel >= D3D_SHADER_MODEL_6_6) {
+                        adapter = std::move(candidate);
+                        device = std::move(probe);
+                        break;
+                    }
                 }
             }
             if (!device) throw std::runtime_error("no D3D12 hardware adapter; "
@@ -203,12 +211,16 @@ struct DeviceContext::Impl {
         if (desc.Type != D3D12_COMMAND_LIST_TYPE_COMPUTE &&
             desc.Type != D3D12_COMMAND_LIST_TYPE_DIRECT)
             throw std::invalid_argument("borrowed D3D12 queue cannot execute compute");
+        // The diagnostic command-list TYPE must match the host queue.
+        // The simulation recorder itself accepts either compute or direct lists.
+        queue_type = desc.Type;
         name = "externally selected D3D12 adapter";
     }
 
     void create_queue() {
         D3D12_COMMAND_QUEUE_DESC desc{};
         desc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+        queue_type = desc.Type;
         desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
         ComPtr<ID3D12CommandQueue> created;
         checked(device->CreateCommandQueue(&desc,IID_PPV_ARGS(created.GetAddressOf())),
@@ -268,10 +280,10 @@ struct DeviceContext::Impl {
                         IID_PPV_ARGS(pipeline.GetAddressOf())),
                 "create native DXIL compute pipeline");
 
-        checked(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE,
+        checked(device->CreateCommandAllocator(queue_type,
                         IID_PPV_ARGS(diagnostic_allocator.GetAddressOf())),
                 "create diagnostic command allocator");
-        checked(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_COMPUTE,
+        checked(device->CreateCommandList(0,queue_type,
                         diagnostic_allocator.Get(),nullptr,
                         IID_PPV_ARGS(diagnostic_commands.GetAddressOf())),
                 "create diagnostic command list");
