@@ -79,6 +79,7 @@ struct IntegrationRuntime::Impl {
     bool software = false;
     float timestamp_period = 0.0f;
     bool timestamp_supported = false;
+    std::uint32_t timestamp_valid_bits = 0;
     double last_gpu_ms = -1.0;
 
     Buffer current, previous, rest, staging;
@@ -181,26 +182,33 @@ struct IntegrationRuntime::Impl {
         std::vector<VkPhysicalDevice> devices(count);
         vk_check(vkEnumeratePhysicalDevices(instance, &count, devices.data()),
                  "enumerate physical devices");
-        for (VkPhysicalDevice candidate : devices) {
-            VkPhysicalDeviceProperties props{};
-            vkGetPhysicalDeviceProperties(candidate, &props);
-            if (props.apiVersion < VK_API_VERSION_1_2) continue;
-            std::uint32_t families = 0;
-            vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, nullptr);
-            std::vector<VkQueueFamilyProperties> queue_props(families);
-            vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, queue_props.data());
-            for (std::uint32_t i = 0; i < families; ++i) {
-                if (queue_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
-                    physical = candidate;
-                    family = i;
-                    device_name = props.deviceName;
-                    software = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
-                    timestamp_supported = queue_props[i].timestampValidBits != 0;
-                    timestamp_period = props.limits.timestampPeriod;
-                    break;
+        // Never silently prefer a CPU Vulkan adapter over a real GPU.
+        // This policy is queried ONCE during initialization.
+        for (int tier = 0; tier < 2 && !physical; ++tier) {
+            for (VkPhysicalDevice candidate : devices) {
+                VkPhysicalDeviceProperties props{};
+                vkGetPhysicalDeviceProperties(candidate, &props);
+                if (props.apiVersion < VK_API_VERSION_1_2) continue;
+                const bool cpu = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+                if (cpu != (tier == 1)) continue;
+                std::uint32_t families = 0;
+                vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, nullptr);
+                std::vector<VkQueueFamilyProperties> queue_props(families);
+                vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, queue_props.data());
+                for (std::uint32_t i = 0; i < families; ++i) {
+                    if (queue_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+                        physical = candidate;
+                        family = i;
+                        device_name = props.deviceName;
+                        software = cpu;
+                        timestamp_valid_bits = queue_props[i].timestampValidBits;
+                        timestamp_supported = timestamp_valid_bits != 0;
+                        timestamp_period = props.limits.timestampPeriod;
+                        break;
+                    }
                 }
+                if (physical) break;
             }
-            if (physical) break;
         }
         if (!physical) throw std::runtime_error("no Vulkan 1.2+ compute queue");
         const float priority = 1.0f;
@@ -373,6 +381,11 @@ struct IntegrationRuntime::Impl {
             p.global_stiffness, p.global_range, 0, 0, 0
         };
         begin_commands();
+        // Explicit visibility from previous batch's position writes to this
+        // batch's position/history reads, even across a queue submission.
+        barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
         if (timestamp_supported) {
             vkCmdResetQueryPool(commands, queries, 0, 2);
             vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, queries, 0);
@@ -401,7 +414,9 @@ struct IntegrationRuntime::Impl {
                      times.data(), sizeof(times[0]),
                      VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT),
                      "read GPU timestamps");
-            const std::uint64_t diff = times[1] - times[0];
+            const std::uint64_t delta = times[1] - times[0];
+            const std::uint64_t diff = timestamp_valid_bits == 64 ? delta :
+                (delta & ((std::uint64_t{1} << timestamp_valid_bits) - 1));
             last_gpu_ms = static_cast<double>(diff) *
                 static_cast<double>(timestamp_period) / 1.0e6;
         }

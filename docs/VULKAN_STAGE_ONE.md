@@ -39,7 +39,7 @@ working hair simulator from the one-stage smoke test.**
 
 ## Runtime and performance boundaries
 
-The first executor implements an API 1.2 Vulkan subset so software Vulkan CI
+The first executor selects a hardware Vulkan compute device before a software adapter, and implements an API 1.2 Vulkan subset so software Vulkan CI
 can execute it. Intended shipping qualification remains **Vulkan 1.4**;
 runtime feature admission and compatibility are not complete. Shader compilation
 is build-time through DXC; no runtime compiler is loaded by the SDK.

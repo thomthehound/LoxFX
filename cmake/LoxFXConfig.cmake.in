@@ -3,5 +3,11 @@
 
 @PACKAGE_INIT@
 
+# The core package remains Vulkan-free when the optional backend is disabled.
+include(CMakeFindDependencyMacro)
+if(@LOXFX_ENABLE_VULKAN@)
+  find_dependency(Vulkan)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/LoxFXTargets.cmake")
 check_required_components(LoxFX)
