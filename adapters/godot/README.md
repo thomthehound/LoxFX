@@ -60,6 +60,18 @@ the caller must choose its synchronization and sampling boundaries. Since
 this deliberately passes positions through CPU memory, its transfer and
 conversion costs are **not representative of the production rendering path**.
 
+Call `load_tfx_bytes` and `publish_positions` on the Godot scene
+thread. A native worker or GPU queue should transfer its completed diagnostic
+snapshot across a controlled boundary before the scene node updates the mesh.
+`LoxFXGroom3D` does not solve thread affinity for native producers.
+
+The vertex update intentionally copies uncompressed 32-bit XYZ data: Godot's
+render vertex-buffer format uses three float32 components even if an engine
+build uses double-precision CPU `Vector3` values. The adapter bounds both
+visible vertex counts and total upload bytes, and excludes workgroup padding
+from the displayed mesh. The checked Linux runtime smoke uses Godot 4.7.2
+and a real AMD Ratboy asset. It does not constitute a visual GPU-output test.
+
 The adapter does not select Vulkan/D3D12 devices, share Godot native
 resources, submit on the renderer queue or block each simulation stage.
 Those will require a separately reviewed, backend-local GPU interop contract
