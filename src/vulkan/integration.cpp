@@ -242,6 +242,12 @@ struct IntegrationRuntime::Impl {
             throw std::invalid_argument("prepared groom exceeds staging capacity");
 
         create_device();
+        VkPhysicalDeviceProperties limits{};
+        vkGetPhysicalDeviceProperties(physical, &limits);
+        if (vertex_bytes > limits.limits.maxStorageBufferRange)
+            throw std::runtime_error(
+                "groom exceeds selected device maxStorageBufferRange; "
+                "partitioning oversized grooms is not yet implemented");
         allocate(current, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);

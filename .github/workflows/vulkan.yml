@@ -38,3 +38,45 @@ jobs:
         run: |
           export VK_LOADER_DRIVERS_SELECT='*lvp*'
           ctest --test-dir build/gpu --output-on-failure -R '^loxfx_vulkan_integration$' -V
+
+  vulkan-windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Vulkan headers and loader
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          if (!(Test-Path $vcpkg)) { throw "vcpkg unavailable on Windows runner" }
+          & $vcpkg install vulkan:x64-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install official Windows DXC
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
+          $dest = Join-Path $env:RUNNER_TEMP 'dxc'
+          Invoke-WebRequest -Uri 'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dest
+          $compiler = Get-ChildItem -Path $dest -Recurse -Filter 'dxc.exe' |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+            Select-Object -First 1
+          if (!$compiler) { throw "DXC x64 compiler not found in official archive" }
+          "LOXFX_DXC=$($compiler.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Configure Vulkan backend
+        shell: pwsh
+        run: |
+          cmake -S . -B build/gpu -A x64 -DLOXFX_ENABLE_VULKAN=ON -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" "-DLOXFX_DXC_EXECUTABLE=$env:LOXFX_DXC"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile Vulkan module and HLSL
+        run: cmake --build build/gpu --config Release --parallel 2
+      - name: Install SDK and configure downstream package
+        shell: pwsh
+        run: |
+          cmake --install build/gpu --config Release --prefix "$env:RUNNER_TEMP/loxfx-installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake -S tests/package_smoke -B build/consumer -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" "-DCMAKE_PREFIX_PATH=$env:RUNNER_TEMP/loxfx-installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/consumer --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
