@@ -12,7 +12,9 @@ include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-add_library(loxfx_core STATIC src/tfx_import.cpp)
+add_library(loxfx_core STATIC
+  src/tfx_import.cpp
+  src/simulation_work.cpp)
 add_library(LoxFX::Core ALIAS loxfx_core)
 target_compile_features(loxfx_core PUBLIC cxx_std_23)
 target_include_directories(loxfx_core PUBLIC
@@ -37,6 +39,10 @@ if(BUILD_TESTING)
   add_executable(loxfx_tfx_import_tests tests/tfx_import_tests.cpp)
   target_link_libraries(loxfx_tfx_import_tests PRIVATE LoxFX::Core)
   add_test(NAME loxfx_tfx_import COMMAND loxfx_tfx_import_tests)
+
+  add_executable(loxfx_simulation_work_tests tests/simulation_work_tests.cpp)
+  target_link_libraries(loxfx_simulation_work_tests PRIVATE LoxFX::Core)
+  add_test(NAME loxfx_simulation_work COMMAND loxfx_simulation_work_tests)
 endif()
 
 # Public, relocatable CMake package for independently built consumers.

@@ -1,0 +1,117 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# TressFX 4.1 guide-strand simulation execution and performance trace
+
+Status: source audit and executable work-count contract, 15 October 2026.
+No GPU simulation is implemented or benchmarked yet.
+
+## Source references
+
+- [Simulation host](https://github.com/thomthehound/TressFX/blob/master/src/TressFX/TressFXSimulation.cpp):
+  `Initialize`, `DispatchComputeShader`, `Simulate`.
+- [Simulation shaders](https://github.com/thomthehound/TressFX/blob/master/src/Shaders/TressFXSimulation.hlsl):
+  `CalcIndicesInVertexLevelMaster`, `CalcIndicesInStrandLevelMaster`,
+  and six stage entry points.
+- [Asset preparation](https://github.com/thomthehound/TressFX/blob/master/src/TressFX/TressFXAsset.cpp):
+  `LoadHairData`, `GenerateFollowHairs`.
+- [Hair object state](https://github.com/thomthehound/TressFX/blob/master/src/TressFX/TressFXHairObject.cpp):
+  `UpdateSimulationParameters`, `TressFXHairObject` initialization.
+- [Constants and workgroup packing](https://github.com/thomthehound/TressFX/blob/master/src/TressFX/TressFXConstantBuffers.h):
+  `SetVerticesPerStrand`, `SetFollowHairsPerGuidHair`.
+
+## Actual GPU stage order
+
+| Stage | Shader entry point | Indexing | Writes and dependencies |
+|---|---|---|---|
+| 1 | `IntegrationAndGlobalShapeConstraints` | 1 thread/guide vertex | Writes positions/history; consumes skinned rest positions |
+| 2 | `CalculateStrandLevelData` | 1 thread/guide strand | Reads current/old/old-old root positions; writes skinning/VSP transforms |
+| 3 | `VelocityShockPropagation` | 1 thread/guide vertex | Reads stage 2 transforms; writes current/old positions |
+| 4 | `LocalShapeConstraints` | 1 thread/guide strand per iteration | Reads transforms, rest and current positions; writes current positions |
+| 5 | `LengthConstriantsWindAndCollision` | 1 thread/guide vertex | Shared-memory length iterations and barriers, wind, tangents, position history |
+| 6 | `UpdateFollowHairVertices` | 1 thread/guide vertex | Expands followers based on guide positions and offsets, publishes renderable positions |
+
+The reference host schedules **stage-major across hair objects**, with per-object
+resource binding and a UAV barrier at the end of each hair-object stage.
+Before the first stage, it updates all objects' simulation constant buffers;
+after the last stage, it advances their simulation frame. The local-shape
+stage is repeated by host dispatch if the strands have fewer than 64 vertices.
+
+A correct GPU executor must preserve *all* observable ordering, ownership,
+barrier and publication dependencies. Do not mistake six independently
+compilable kernels for a complete simulation pipeline.
+
+## Verified over-dispatch in original host
+
+`DispatchComputeShader` derives its `DISPATCHLEVEL_VERTEX` groups from
+`GetNumTotalHairVertices()` and strand groups from
+`GetNumTotalHairStrands()`. Those include procedurally generated follower
+strands. But **all six** shader entry points use `CalcIndicesIn*Master`,
+which multiplies the selected guide index by `followers_per_guide + 1`.
+Consequently the shader threads for each stage represent *guides*, while
+the host launches using guides **plus followers**.
+
+For three followers/guide and 64 prepared guides of 16 vertices:
+- Packed resource capacity: 256 strands × 16 = 4,096 vertices.
+- Correct master-index vertex dispatch: 1,024 lanes = 16 groups.
+- Legacy vertex dispatch: 4,096 lanes = 64 groups.
+- Correct master-index strand dispatch: 64 lanes = 1 group.
+- Legacy strand dispatch: 256 lanes = 4 groups.
+- Four per-vertex stages, two strand stages, and two local-shape iterations
+  lead to 4,288 intended master-guide lanes vs. 17,152 reference-launched lanes.
+
+That is **4× the thread lanes**, NOT evidence of a 4× performance slowdown
+or a 4× runtime speedup after correcting it. The extra groups may also index
+past valid master-strand data: their shader-side index calculation treats
+already-expanded counts as guide counts, and does not show a guard for the
+end of actual guide storage. This needs a real reference run to establish
+actual behavior, risk and performance impact.
+
+The C++23 `make_simulation_work_plan` function validates index ranges,
+retains 64-guide padding required by the unguarded source shader, and
+calculates all six guide-only group counts once during preparation/LOD changes.
+It never queries GPU features or performs per-dispatch count division.
+It is a necessary execution contract, **not** a simulation, driver interface
+or automatic speedup.
+
+## Outstanding synchronization concern
+
+The source host issues multiple local-shape dispatches inside the same
+per-object loop and only emits its explicit UAV barrier *after* all local
+iterations. Since iterations read and write the same position buffer, the
+port must audit native D3D12/Vulkan dispatch semantics and engine-interface
+implicit barriers before reproducing this sequence. Do not silently assume
+every dispatch is ordered at the shader-memory visibility level.
+Avoid unnecessary barriers, but do not trade synchronization correctness
+for a speculative gain.
+
+## Performance gates for GPU implementation
+
+1. Upload and prepare the groom once; retain GPU buffers across steps.
+   Account for actual simulated guides separately from rendered followers.
+2. Preserve the six-stage dependency DAG, buffer layouts, skinning inputs,
+   per-object constants and publish barrier. Ensure no host-to-CPU roundtrip
+   between passes.
+3. Minimize redundant dispatches and CPU work; batch or indirect-dispatch
+   where correct. Do not reorganize dependent passes merely to reduce a
+   timestamp counter.
+4. Compare original 64-thread topology with capabilities of RDNA,
+   Intel Arc and NVIDIA subgroups. Wave32 and wave64 strategies require
+   actual device qualification; no mandatory cooperative matrix features.
+5. Profile full simulation GPU time, each stage GPU time, memory bandwidth,
+   occupancy, queue stalls, copies/synchronization and peak resident memory
+   on qualifying physical hardware.
+6. Treat WARP/llvmpipe CI as correctness harnesses only. Real hardware
+   acceptance is a separate milestone.
+7. Use realistic animated scalp, wind, collisions, guide/follower ratios
+   and multi-groom scenes. Log numerical stability alongside time and memory.
+
+## Immediate next implementation
+
+Adapt the original six stages' GPU data layouts, host resource ownership and
+command scheduling as **one coherent Vulkan-first simulation pipeline** with
+the same source-derived strand/vertex indexing. Compile shared shader sources
+through DXC to SPIR-V and DXIL. Build a fixed animated-groom benchmark with
+GPU timestamps before replacing the solver mathematics. Investigate optional
+XPBD, inter-strand collisions and advanced rendering only against this
+measured baseline.

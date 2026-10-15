@@ -81,6 +81,11 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ### M1 — First complete strand simulation
 
+- [x] Trace source stage order, master strand indexing, dispatch counts, and
+  unused follower work; implement checked source-aligned guide-work planning.
+- [ ] Build a native GPU executor for the whole source stage chain; the
+  work-plan alone does not simulate hair or validate a shader port.
+
 - Port an identifiable complete TressFX guide-strand simulation pipeline,
   preserving integration, global/local shape constraints, velocity shock
   propagation, wind, length iterations, follow strands and dispatch ordering.
