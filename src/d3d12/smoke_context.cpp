@@ -354,13 +354,14 @@ struct GroomState::Impl {
     ComPtr<ID3D12Resource> current, previous, rest;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0;
     std::uint64_t bytes=0;
+    std::uint64_t committed_bytes=0;
 };
 GroomState::GroomState(std::unique_ptr<Impl> g) noexcept:impl_(std::move(g)){}
 GroomState::~GroomState()=default;
 GroomState::GroomState(GroomState&&) noexcept=default;
 GroomState& GroomState::operator=(GroomState&&) noexcept=default;
 std::uint64_t GroomState::allocated_buffer_bytes()const noexcept{
-    return impl_?3*impl_->bytes:0;
+    return impl_?impl_->committed_bytes:0;
 }
 
 DeviceContext::DeviceContext(const std::filesystem::path& dxil,AdapterChoice preference)
@@ -390,6 +391,14 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
     g->groups=source.work.stages[0].thread_groups;
     g->bytes=static_cast<UINT64>(source.rest_positions.size())*sizeof(Float4);
     if(!g->bytes)throw std::invalid_argument("empty prepared hair buffers");
+    const auto uav_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    const auto rest_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_NONE);
+    const auto mutable_info=impl_->device->GetResourceAllocationInfo(0,1,&uav_desc);
+    const auto immutable_info=impl_->device->GetResourceAllocationInfo(0,1,&rest_desc);
+    if(mutable_info.SizeInBytes==UINT64_MAX ||
+       immutable_info.SizeInBytes==UINT64_MAX)
+        throw std::runtime_error("invalid D3D12 groom buffer allocation requirements");
+    g->committed_bytes=2*mutable_info.SizeInBytes+immutable_info.SizeInBytes;
 
     g->current=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);

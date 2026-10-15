@@ -83,8 +83,11 @@ int main(int argc,char** argv) {
         require(context.native_device()!=nullptr,"native D3D12 WARP device");
         auto g1=context.prepare_diagnostic(*first);
         auto g2=context.prepare_diagnostic(*second);
-        require(g1.allocated_buffer_bytes()>0&&g2.allocated_buffer_bytes()>0,
-                "persistent per-groom allocations");
+        require(g1.allocated_buffer_bytes()>=3*first->work.packed_total_vertices*
+                    sizeof(loxfx::Float4) &&
+                g2.allocated_buffer_bytes()>=3*second->work.packed_total_vertices*
+                    sizeof(loxfx::Float4),
+                "committed D3D12 allocations include resource alignment");
         const auto initial1=context.diagnostic_read_positions(g1);
         const auto initial2=context.diagnostic_read_positions(g2);
         require(initial1[1].y==1.0f&&initial2[1].y==6.0f,
@@ -144,6 +147,27 @@ int main(int argc,char** argv) {
             auto result=borrowed.diagnostic_read_positions(third);
             require(std::abs(result[1].y-(1.0f-delta))<0.0001f,
                     "native compute through borrowed D3D12 context");
+        }
+
+        // A borrowed DIRECT queue must use DIRECT command allocators/lists
+        // even though the shader work itself is compute-only.
+        {
+            D3D12_COMMAND_QUEUE_DESC queue_desc{};
+            queue_desc.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
+            ComPtr<ID3D12CommandQueue> direct;
+            hrcheck(context.native_device()->CreateCommandQueue(
+                        &queue_desc,IID_PPV_ARGS(direct.GetAddressOf())),
+                    "create borrowed direct queue");
+            gpu::DeviceContext borrowed_direct(
+                {context.native_device(),direct.Get()},argv[1]);
+            auto direct_groom=borrowed_direct.prepare_diagnostic(*first);
+            auto* direct_commands=borrowed_direct.begin_diagnostic_commands();
+            borrowed_direct.record_integration(direct_commands,direct_groom,
+                {.time_step=dt,.gravity=g,.damping=0},1);
+            borrowed_direct.submit_diagnostic_and_wait();
+            auto direct_positions=borrowed_direct.diagnostic_read_positions(direct_groom);
+            require(std::abs(direct_positions[1].y-(1.0f-delta))<0.0001f,
+                    "borrowed direct queue executes compute with matching list type");
         }
 
         submit_host_commands(context,g1);
