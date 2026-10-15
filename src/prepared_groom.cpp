@@ -87,7 +87,8 @@ prepare_impl(const GroomAsset& asset, const GroomPreparation& options) {
         .work = *work,
         .authored_guide_strands = asset.guide_strands,
         .vertices_per_strand = asset.vertices_per_strand,
-        .followers_per_guide = options.followers_per_guide
+        .followers_per_guide = options.followers_per_guide,
+        .follower_tip_separation = options.follower_tip_separation
     };
 
     const std::size_t count = work->packed_total_vertices;
@@ -166,6 +167,8 @@ prepare_impl(const GroomAsset& asset, const GroomPreparation& options) {
 } // namespace
 
 std::expected<void, std::string> validate_prepared_groom(const PreparedGroom& g) {
+    if (!std::isfinite(g.follower_tip_separation))
+        return std::unexpected("nonfinite follower tip separation");
     const std::uint32_t iterations = g.vertices_per_strand == 64
         ? g.work.shader_local_shape_iterations : g.work.stages[3].iterations;
     const auto expected = make_simulation_work_plan({
