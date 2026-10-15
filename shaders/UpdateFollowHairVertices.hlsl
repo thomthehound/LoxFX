@@ -56,7 +56,11 @@ void UpdateFollowHairVertices(uint local_id : SV_GroupIndex,
     const float4 guide_position=positions[index];
     const uint tangent_index=vertex+1u<params.vertices_per_strand?index:index-1u;
     float3 delta=positions[tangent_index+1u].xyz-positions[tangent_index].xyz;
-    const float squared=dot(delta,delta);
+    float squared=dot(delta,delta);
+    if(squared<=1e-16f) {
+        delta=rest_positions[tangent_index+1u].xyz-rest_positions[tangent_index].xyz;
+        squared=dot(delta,delta);
+    }
     const float4 tangent=float4(squared>1e-16f?
         delta*rsqrt(squared):float3(0,1,0),0);
     dynamic_tangents[index]=tangent;
