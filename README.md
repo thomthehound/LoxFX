@@ -22,8 +22,8 @@ integration are not implemented in this initial milestone.**
 
 ## Build
 
-Requires CMake 3.21+ and a C++23 compiler and standard library on Windows or Linux. No graphics
-SDK, CUDA runtime, PhysX, Cauldron or Godot installation is needed.
+Requires CMake 3.28+ and a C++23 compiler and standard library on Windows or Linux. No graphics
+SDK, GPU runtime, reference implementation or game engine is needed.
 
 ```sh
 cmake -S . -B build -DBUILD_TESTING=ON

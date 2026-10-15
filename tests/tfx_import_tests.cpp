@@ -3,9 +3,10 @@
 
 #include "loxfx/groom.h"
 
-#include <cmath>
+#include <bit>
 #include <cstdint>
-#include <cstring>
+#include <initializer_list>
+#include <span>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -23,9 +24,7 @@ void put_u32(std::vector<std::uint8_t>& bytes, std::size_t offset, std::uint32_t
 }
 
 void put_f32(std::vector<std::uint8_t>& bytes, std::size_t offset, float value) {
-    std::uint32_t bits;
-    std::memcpy(&bits, &value, 4);
-    put_u32(bytes, offset, bits);
+    put_u32(bytes, offset, std::bit_cast<std::uint32_t>(value));
 }
 
 // Two guide strands, four vertices each, with all optional 4.x attributes.
@@ -110,8 +109,23 @@ void test_rejection() {
     put_u32(bytes, 16, 164);
     require(!loxfx::import_tfx(bytes), "overlapping attribute ranges");
     bytes = fixture();
+    put_u32(bytes, 16, 289);
+    require(!loxfx::import_tfx(bytes), "misaligned attribute offset");
+    bytes = fixture();
     put_f32(bytes, 160, std::numeric_limits<float>::quiet_NaN());
     require(!loxfx::import_tfx(bytes), "nonfinite guide vertex");
+    bytes = fixture();
+    put_f32(bytes, 288, std::numeric_limits<float>::quiet_NaN());
+    require(!loxfx::import_tfx(bytes), "nonfinite strand UV");
+    bytes = fixture();
+    put_f32(bytes, 304, std::numeric_limits<float>::infinity());
+    require(!loxfx::import_tfx(bytes), "nonfinite vertex UV");
+    bytes = fixture();
+    put_f32(bytes, 368, std::numeric_limits<float>::quiet_NaN());
+    require(!loxfx::import_tfx(bytes), "nonfinite thickness");
+    bytes = fixture();
+    put_f32(bytes, 376, std::numeric_limits<float>::infinity());
+    require(!loxfx::import_tfx(bytes), "nonfinite vertex color");
     bytes = fixture();
     put_u32(bytes, 4, std::numeric_limits<std::uint32_t>::max());
     require(!loxfx::import_tfx(bytes), "malicious strand count");

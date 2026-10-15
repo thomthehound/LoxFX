@@ -4,8 +4,8 @@
 #include "loxfx/groom.h"
 
 #include <array>
+#include <bit>
 #include <cmath>
-#include <cstring>
 #include <limits>
 
 namespace loxfx {
@@ -22,9 +22,7 @@ std::uint32_t read_u32(const std::uint8_t* bytes, std::size_t offset) {
 
 float read_f32(const std::uint8_t* bytes, std::size_t offset) {
     const std::uint32_t bits = read_u32(bytes, offset);
-    float value;
-    std::memcpy(&value, &bits, sizeof(value));
-    return value;
+    return std::bit_cast<float>(bits);
 }
 
 Float2 read_float2(const std::uint8_t* bytes, std::size_t offset) {
@@ -73,6 +71,10 @@ ImportResult import_tfx(std::span<const std::uint8_t> input) {
         return fail("invalid guide count or vertices-per-strand");
     }
 
+    if (static_cast<std::size_t>(strands) >
+        std::numeric_limits<std::size_t>::max() / vertices) {
+        return fail("TFX guide count exceeds addressable memory");
+    }
     const std::size_t vertex_count =
         static_cast<std::size_t>(strands) * static_cast<std::size_t>(vertices);
     if (vertex_count > std::numeric_limits<std::size_t>::max() / 16u) {
@@ -101,7 +103,7 @@ ImportResult import_tfx(std::span<const std::uint8_t> input) {
             return fail("TFX attribute length overflow");
         }
         const std::size_t length = counts[i] * strides[i];
-        if (offset < header_bytes || offset > byte_count ||
+        if ((offset & 7u) != 0 || offset < header_bytes || offset > byte_count ||
             length > byte_count - offset) {
             return fail("TFX attribute extends outside input buffer");
         }
@@ -127,23 +129,39 @@ ImportResult import_tfx(std::span<const std::uint8_t> input) {
 
     if (sections[1].present) {
         asset.strand_uvs.reserve(strands);
-        for (std::size_t i = 0; i < strands; ++i)
-            asset.strand_uvs.push_back(read_float2(bytes, sections[1].begin + 8u * i));
+        for (std::size_t i = 0; i < strands; ++i) {
+            const Float2 value = read_float2(bytes, sections[1].begin + 8u * i);
+            if (!std::isfinite(value.x) || !std::isfinite(value.y))
+                return fail("TFX strand UVs contain non-finite values");
+            asset.strand_uvs.push_back(value);
+        }
     }
     if (sections[2].present) {
         asset.vertex_uvs.reserve(vertex_count);
-        for (std::size_t i = 0; i < vertex_count; ++i)
-            asset.vertex_uvs.push_back(read_float2(bytes, sections[2].begin + 8u * i));
+        for (std::size_t i = 0; i < vertex_count; ++i) {
+            const Float2 value = read_float2(bytes, sections[2].begin + 8u * i);
+            if (!std::isfinite(value.x) || !std::isfinite(value.y))
+                return fail("TFX vertex UVs contain non-finite values");
+            asset.vertex_uvs.push_back(value);
+        }
     }
     if (sections[3].present) {
         asset.strand_thickness.reserve(strands);
-        for (std::size_t i = 0; i < strands; ++i)
-            asset.strand_thickness.push_back(read_f32(bytes, sections[3].begin + 4u * i));
+        for (std::size_t i = 0; i < strands; ++i) {
+            const float value = read_f32(bytes, sections[3].begin + 4u * i);
+            if (!std::isfinite(value))
+                return fail("TFX strand thickness contains non-finite values");
+            asset.strand_thickness.push_back(value);
+        }
     }
     if (sections[4].present) {
         asset.vertex_colors.reserve(vertex_count);
-        for (std::size_t i = 0; i < vertex_count; ++i)
-            asset.vertex_colors.push_back(read_float4(bytes, sections[4].begin + 16u * i));
+        for (std::size_t i = 0; i < vertex_count; ++i) {
+            const Float4 value = read_float4(bytes, sections[4].begin + 16u * i);
+            if (!finite(value))
+                return fail("TFX vertex colors contain non-finite values");
+            asset.vertex_colors.push_back(value);
+        }
     }
     return asset;
 }

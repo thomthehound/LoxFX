@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.28)
 project(LoxFX VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)

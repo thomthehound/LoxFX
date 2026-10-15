@@ -18,7 +18,7 @@ performance comparison independent of LoxFX.
 
 ## Target and performance policy
 
-- C++23 independent core; Windows and Linux first. No engine or GPU runtime
+- C++23 independent core with CMake 3.28+; Windows and Linux first. No engine or GPU runtime
   dependency in asset import or CPU-only builds.
 - GPU shipping candidate: Vulkan 1.4 or D3D12 SM6.6, with independently
   checked actual runtime capabilities. Shader Model is not a Vulkan feature.
@@ -57,7 +57,7 @@ Optional external integration: explicit collision and execution interfaces.
 
 Authored guide geometry remains distinct from padded or compressed device
 layouts. Preserve all supported imported attributes. Avoid exporting Godot,
-PhysX, Vulkan or D3D12 types through the central asset/simulation API.
+external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ## Milestones
 
@@ -125,7 +125,7 @@ including multi-character scenes.
 
 ## Do not undertake by default
 
-No whole-engine fork, mandatory PhysX, CUDA, Godot or Cauldron dependency.
+No whole-engine fork or mandatory external physics, GPU-vendor SDK, game-engine or sample-framework dependency.
 No early architectural rewrite around ray-traced hair, full rod dynamics,
 cooperative matrices, ML inference, or Work Graphs. No slow software-like
 fallback becoming the shipping baseline. Each advanced option requires a
