@@ -27,6 +27,13 @@ jobs:
           ref: master
           path: external/godot-cpp
           persist-credentials: false
+      - name: Checkout Godauldron as a native integration consumer
+        if: runner.os == 'Linux'
+        uses: actions/checkout@v7
+        with:
+          repository: thomthehound/Godauldron
+          path: external/Godauldron
+          persist-credentials: false
       - name: Install software Vulkan and SDK headers (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -125,3 +132,23 @@ jobs:
             fi
             exit 1
           fi
+
+      - name: Verify real LoxFX scene inside Godauldron's generic host
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
+          lab=external/Godauldron
+          package="$lab/experiments/loxfx"
+          mkdir -p "$package" "$lab/.godot"
+          cp -r adapters/godot/examples/godauldron/. "$package/"
+          mkdir -p "$package/bin" "$package/shaders" "$package/assets"
+          cp build/godot/shaders/loxfx_*.spv "$package/shaders/"
+          cp adapters/godot/tests/addons/loxfx/bin/libloxfx_godot.so "$package/bin/"
+          cp adapters/godot/tests/grooms/Ratboy_mohawk.tfx "$package/assets/"
+          printf 'res://experiments/loxfx/loxfx.gdextension\n' > "$lab/.godot/extension_list.cfg"
+          engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
+          test -n "$engine"
+          timeout 120s "$engine" --headless --path "$lab" \
+            --script res://experiments/loxfx/scenes/headless_smoke.gd
