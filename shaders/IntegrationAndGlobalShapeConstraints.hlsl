@@ -41,10 +41,20 @@ struct Parameters {
     float reserved2;
     float reserved3;
 };
-[[vk::push_constant]] ConstantBuffer<Parameters> params;
-[[vk::binding(0, 0)]] RWStructuredBuffer<float4> current_positions : register(u0, space0);
-[[vk::binding(1, 0)]] RWStructuredBuffer<float4> previous_positions : register(u1, space0);
-[[vk::binding(2, 0)]] StructuredBuffer<float4> rest_positions : register(t2, space0);
+// Identical integration maths for DXIL/D3D12 and SPIR-V/Vulkan. The parameter
+// transport differs: Vulkan push constants vs. D3D12 CBV/root constants.
+// A real D3D12 runtime must supply b0 and u0/u1/t2 root bindings.
+#ifdef LOXFX_SPIRV
+    [[vk::push_constant]] ConstantBuffer<Parameters> params;
+    #define LOXFX_BINDING(index) [[vk::binding(index, 0)]]
+#else
+    ConstantBuffer<Parameters> params : register(b0, space0);
+    #define LOXFX_BINDING(index)
+#endif
+
+LOXFX_BINDING(0) RWStructuredBuffer<float4> current_positions : register(u0, space0);
+LOXFX_BINDING(1) RWStructuredBuffer<float4> previous_positions : register(u1, space0);
+LOXFX_BINDING(2) StructuredBuffer<float4> rest_positions : register(t2, space0);
 
 [numthreads(64, 1, 1)]
 void IntegrationAndGlobalShapeConstraints(

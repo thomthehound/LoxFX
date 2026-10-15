@@ -4,6 +4,7 @@
 #pragma once
 
 #include "loxfx/prepared_groom.h"
+#include "loxfx/integration_parameters.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -16,14 +17,6 @@ namespace loxfx::vulkan {
 // The FIRST TressFX simulation stage only. This is an executable Vulkan
 // integration milestone, not a complete hair simulator. Root transforms,
 // bone skinning, constraints, collisions and follower publication follow.
-struct IntegrationParameters {
-    float time_step = 1.0f / 60.0f;
-    float gravity = 9.81f;
-    float damping = 0.08f;
-    float global_stiffness = 0.0f;
-    float global_range = 0.0f;
-};
-
 class IntegrationRuntime {
 public:
     IntegrationRuntime(const PreparedGroom& groom, const std::filesystem::path& spirv);

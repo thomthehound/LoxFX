@@ -37,6 +37,15 @@ renderer/visual acceptance; compatibility with external command queues.
 **Do not infer source parity, performance improvement, or a complete
 working hair simulator from the one-stage smoke test.**
 
+## Dual-backend parity
+
+D3D12 SM6.6 remains a first-class production target. The same first-stage
+HLSL compiles to DXIL and SPIR-V, with a backend-specific parameter binding
+transport (D3D12 b0 CBV; Vulkan push constants). The native D3D12 runner is
+**not implemented yet**. CPU-side parameter semantics are now independent of
+the Vulkan namespace. See [BACKEND_PARITY.md](BACKEND_PARITY.md) for the
+tracked cross-backend acceptance requirements.
+
 ## Runtime and performance boundaries
 
 The first executor selects a hardware Vulkan compute device before a software adapter, and implements an API 1.2 Vulkan subset so software Vulkan CI

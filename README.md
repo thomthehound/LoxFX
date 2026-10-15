@@ -70,6 +70,18 @@ the stage through Mesa software Vulkan for functional validation, **not**
 representative GPU performance. Hardware qualification remains required.
 See [stage-one execution notes](docs/VULKAN_STAGE_ONE.md).
 
+## Direct3D 12 status
+
+Direct3D 12 / Shader Model 6.6 and Vulkan 1.4 are **equal intended production
+backends**. The first stage's simulation input semantics and HLSL algorithm
+are shared. Windows CI compiles the exact same stage to D3D12 DXIL and Vulkan
+SPIR-V. **DXIL compilation is not a D3D12 runtime**; native D3D12 resource,
+root-signature, command-list, fence and GPU timestamp execution must follow.
+
+See the [backend parity contract](docs/BACKEND_PARITY.md). Neither backend
+should introduce incompatible physics behavior or constrain the other to a
+slow fallback.
+
 ## Direction
 
 - Vulkan 1.4 and D3D12 Shader Model 6.6 are the intended shipping GPU floors;

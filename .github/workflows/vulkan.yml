@@ -67,10 +67,15 @@ jobs:
       - name: Configure Vulkan backend
         shell: pwsh
         run: |
-          cmake -S . -B build/gpu -A x64 -DLOXFX_ENABLE_VULKAN=ON -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" "-DLOXFX_DXC_EXECUTABLE=$env:LOXFX_DXC"
+          cmake -S . -B build/gpu -A x64 -DLOXFX_ENABLE_VULKAN=ON -DLOXFX_ENABLE_D3D12_SHADERS=ON -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" "-DLOXFX_DXC_EXECUTABLE=$env:LOXFX_DXC"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Compile Vulkan module and HLSL
+      - name: Compile Vulkan backend, SPIR-V and D3D12 SM6.6 DXIL
         run: cmake --build build/gpu --config Release --parallel 2
+      - name: Verify installed shader outputs
+        shell: pwsh
+        run: |
+          if (!(Test-Path build/gpu/shaders/loxfx_integration.dxil)) { throw "Missing SM6.6 DXIL output" }
+          if (!(Test-Path build/gpu/shaders/loxfx_integration.spv)) { throw "Missing Vulkan SPIR-V output" }
       - name: Install SDK and configure downstream package
         shell: pwsh
         run: |

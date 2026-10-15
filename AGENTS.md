@@ -13,6 +13,11 @@ important decisions across sessions.
   experimental projects in its source, docs, issues, PRs or release notes.
 - New code requires **C++23**, CMake 3.28+, Apache-2.0 SPDX headers, and
   `windows-latest` / Ubuntu CI. Preserve MIT notices on imported AMD source.
+- **D3D12 SM6.6 and Vulkan 1.4 are first-class production targets.** Any
+  common shader stage must compile to both DXIL and SPIR-V on Windows CI.
+  Do not deepen one backend without tracking the other to parity; keep
+  backend-specific binding, scheduling and resource code in separate modules.
+  Native D3D12 runtime parity is required, not replaced by DXIL compilation.
 - Preserve source-grounded simulation behavior, data ownership, dispatch
   dependencies, synchronization and publication when porting TressFX.
   Deliberate departures require reasons and correctness comparisons.

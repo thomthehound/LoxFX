@@ -13,6 +13,9 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 option(LOXFX_ENABLE_VULKAN "Build the Vulkan integration stage and diagnostic runner" OFF)
+# DXIL compilation is independent of Vulkan: prove shared HLSL portability
+# before the native D3D12 runtime is implemented.
+option(LOXFX_ENABLE_D3D12_SHADERS "Compile the shared integration stage to DXIL" OFF)
 
 add_library(loxfx_core STATIC
   src/tfx_import.cpp
@@ -87,7 +90,7 @@ if(LOXFX_ENABLE_VULKAN)
     OUTPUT "${LOXFX_INTEGRATION_SPV}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
     COMMAND "${LOXFX_DXC_EXECUTABLE}"
-      -spirv -T cs_6_6 -E IntegrationAndGlobalShapeConstraints
+      -spirv -T cs_6_6 -E IntegrationAndGlobalShapeConstraints -DLOXFX_SPIRV=1
       -fspv-target-env=vulkan1.2
       -Fo "${LOXFX_INTEGRATION_SPV}"
       "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
@@ -123,4 +126,26 @@ if(LOXFX_ENABLE_VULKAN)
     add_test(NAME loxfx_vulkan_integration
       COMMAND loxfx_vulkan_integration_tests "${LOXFX_INTEGRATION_SPV}")
   endif()
+endif()
+
+# D3D12 compiler parity: produce native SM6.6 DXIL from the same shader
+# sources as Vulkan. Native D3D12 execution is a separate milestone.
+if(LOXFX_ENABLE_D3D12_SHADERS)
+  if(NOT WIN32)
+    message(FATAL_ERROR "D3D12 DXIL integration-shader validation currently requires Windows")
+  endif()
+  find_program(LOXFX_DXC_EXECUTABLE NAMES dxc dxc.exe REQUIRED)
+  set(LOXFX_INTEGRATION_DXIL "${CMAKE_CURRENT_BINARY_DIR}/shaders/loxfx_integration.dxil")
+  add_custom_command(
+    OUTPUT "${LOXFX_INTEGRATION_DXIL}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+    COMMAND "${LOXFX_DXC_EXECUTABLE}"
+      -T cs_6_6 -E IntegrationAndGlobalShapeConstraints
+      -Fo "${LOXFX_INTEGRATION_DXIL}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
+    VERBATIM)
+  add_custom_target(loxfx_integration_dxil ALL DEPENDS "${LOXFX_INTEGRATION_DXIL}")
+  install(FILES "${LOXFX_INTEGRATION_DXIL}"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/loxfx/shaders")
 endif()

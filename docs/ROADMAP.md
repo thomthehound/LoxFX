@@ -25,8 +25,10 @@ performance comparison independent of LoxFX.
 
 - C++23 independent core with CMake 3.28+; Windows and Linux first. No engine or GPU runtime
   dependency in asset import or CPU-only builds.
-- GPU shipping candidate: Vulkan 1.4 or D3D12 SM6.6, with independently
-  checked actual runtime capabilities. Shader Model is not a Vulkan feature.
+- **First-class shipping backends:** Vulkan 1.4 and D3D12 SM6.6, each with
+  independently checked actual runtime capabilities, correctness and
+  performance. Shader Model is not a Vulkan feature; DXIL compilation alone
+  is not proof of native D3D12 execution.
 - Fast native subgroup/wave arithmetic for relevant workloads; optional
   higher tiers may use larger feature sets, including matrix facilities only
   for genuinely matrix-shaped work. WMMA is not required for normal hair
@@ -91,6 +93,10 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 - [x] Add an opt-in native Vulkan/DXC integration-stage runner with
   persistent GPU buffers, explicit synchronization, readback tests and GPU
   timestamps (first stage only; not full simulation).
+- [x] Compile identical first-stage HLSL to Vulkan SPIR-V and D3D12 SM6.6
+  DXIL in Windows CI, with backend-neutral parameter semantics.
+- [ ] Execute the same stage natively through D3D12 resources, root binding,
+  dispatch, fences and GPU timestamps; compare numerical behavior with Vulkan.
 - [ ] Build a native GPU executor for the whole source stage chain; the
   work-plan alone does not simulate hair or validate a shader port.
 
@@ -99,8 +105,10 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
   propagation, wind, length iterations, follow strands and dispatch ordering.
 - Account for original engine-interface resource ownership, barriers,
   scheduling and state publication; no orphan compute-kernel collection.
-- Native Vulkan first, D3D12 from shared shader/data contracts. Preserve a
-  deterministic test fixture and useful reference comparisons.
+- Vulkan and D3D12 share the canonical shader mathematics and neutral
+  simulation inputs, with backend-specific binding and execution. Build and
+  test both backends at each meaningful solver milestone; preserve a
+  deterministic cross-backend fixture and source-reference comparisons.
 - Distinguish authored data from derived per-device representations.
 
 **Gate:** a moving groom runs with plausible, tested dynamics; per-pass and
