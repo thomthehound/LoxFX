@@ -16,6 +16,7 @@ option(LOXFX_BUILD_VULKAN_SMOKE "Build experimental Vulkan compute smoke test" O
 # DXIL compilation is independent of Vulkan: prove shared HLSL portability
 # before the native D3D12 runtime is implemented.
 option(LOXFX_ENABLE_D3D12_SHADERS "Compile the shared integration stage to DXIL" OFF)
+option(LOXFX_BUILD_D3D12_SMOKE "Build internal native D3D12 stage-one test" OFF)
 
 add_library(loxfx_core STATIC
   src/tfx_import.cpp
@@ -62,7 +63,8 @@ install(TARGETS loxfx_core EXPORT LoxFXTargets
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # Prototype backend headers are not installed as public SDK APIs.
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  PATTERN "vulkan" EXCLUDE)
+  PATTERN "vulkan" EXCLUDE
+  PATTERN "d3d12" EXCLUDE)
 install(EXPORT LoxFXTargets
   FILE LoxFXTargets.cmake
   NAMESPACE LoxFX::
@@ -123,7 +125,7 @@ endif()
 
 # D3D12 compiler parity: produce native SM6.6 DXIL from the same shader
 # sources as Vulkan. Native D3D12 execution is a separate milestone.
-if(LOXFX_ENABLE_D3D12_SHADERS)
+if(LOXFX_ENABLE_D3D12_SHADERS OR LOXFX_BUILD_D3D12_SMOKE)
   if(NOT WIN32)
     message(FATAL_ERROR "D3D12 DXIL integration-shader validation currently requires Windows")
   endif()
@@ -139,6 +141,33 @@ if(LOXFX_ENABLE_D3D12_SHADERS)
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
     VERBATIM)
   add_custom_target(loxfx_integration_dxil ALL DEPENDS "${LOXFX_INTEGRATION_DXIL}")
-  install(FILES "${LOXFX_INTEGRATION_DXIL}"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/loxfx/shaders")
+  # DXIL alone can be installed for explicit compiler-parity consumers,
+  # but never ship the experimental native runtime in an SDK package.
+  if(LOXFX_ENABLE_D3D12_SHADERS AND NOT LOXFX_BUILD_D3D12_SMOKE)
+    install(FILES "${LOXFX_INTEGRATION_DXIL}"
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/loxfx/shaders")
+  endif()
+endif()
+
+# Native D3D12 stage-one proof: separate C++23 backend, same HLSL algorithm.
+# Internal target only. No descriptor heaps: root SRV/UAV descriptors and
+# root constants map directly to the first-stage shader's t2/u0/u1/b0.
+if(LOXFX_BUILD_D3D12_SMOKE)
+  add_library(loxfx_d3d12_smoke STATIC src/d3d12/smoke_context.cpp)
+  target_compile_features(loxfx_d3d12_smoke PUBLIC cxx_std_23)
+  target_include_directories(loxfx_d3d12_smoke PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+  target_link_libraries(loxfx_d3d12_smoke PUBLIC LoxFX::Core d3d12 dxgi)
+  add_dependencies(loxfx_d3d12_smoke loxfx_integration_dxil)
+  if(MSVC)
+    target_compile_options(loxfx_d3d12_smoke PRIVATE /W4)
+  else()
+    target_compile_options(loxfx_d3d12_smoke PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  if(BUILD_TESTING)
+    add_executable(loxfx_d3d12_integration_tests tests/d3d12_integration_tests.cpp)
+    target_link_libraries(loxfx_d3d12_integration_tests PRIVATE loxfx_d3d12_smoke)
+    add_test(NAME loxfx_d3d12_integration
+      COMMAND loxfx_d3d12_integration_tests "${LOXFX_INTEGRATION_DXIL}")
+  endif()
 endif()

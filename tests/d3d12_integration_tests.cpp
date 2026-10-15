@@ -1,0 +1,164 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+// SPDX-License-Identifier: Apache-2.0
+// Native D3D12 WARP numerical and host ownership contract smoke.
+#include "loxfx/d3d12/smoke_context.h"
+
+#include <wrl/client.h>
+#include <windows.h>
+#include <cmath>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+namespace {
+using Microsoft::WRL::ComPtr;
+namespace gpu=loxfx::d3d12::smoke;
+
+void require(bool ok,const char* msg) {
+    if (!ok) throw std::runtime_error(msg);
+}
+void hrcheck(HRESULT hr,const char* msg) {
+    if (FAILED(hr)) throw std::runtime_error(msg);
+}
+loxfx::GroomAsset fixture(float base, std::uint32_t guides) {
+    loxfx::GroomAsset result;
+    result.guide_strands=guides;
+    result.vertices_per_strand=4;
+    for(std::uint32_t i=0;i<guides;++i)
+        for(std::uint32_t j=0;j<4;++j)
+            result.positions.push_back({
+                static_cast<float>(i),base+static_cast<float>(j),0,
+                j==0?0.0f:1.0f});
+    return result;
+}
+
+// A deliberately independent host command allocator, list, queue signal and
+// fence. The simulator never sees the allocator, fence, or host wait.
+void submit_host_commands(gpu::DeviceContext& context,
+                          const gpu::GroomState& groom) {
+    const auto external=context.borrowed_handles();
+    ComPtr<ID3D12CommandAllocator> allocator;
+    hrcheck(external.device->CreateCommandAllocator(
+                D3D12_COMMAND_LIST_TYPE_COMPUTE,
+                IID_PPV_ARGS(allocator.GetAddressOf())),
+            "host command allocator");
+    ComPtr<ID3D12GraphicsCommandList> commands;
+    hrcheck(external.device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_COMPUTE,
+                allocator.Get(),nullptr,IID_PPV_ARGS(commands.GetAddressOf())),
+            "host command list");
+    const auto submissions=context.diagnostic_submission_count();
+    constexpr float dt=1.0f/60.0f;
+    context.record_integration(commands.Get(),groom,
+                {.time_step=dt,.gravity=9.81f,.damping=0},1);
+    require(context.diagnostic_submission_count()==submissions,
+            "external recording must not submit internal work");
+    hrcheck(commands->Close(),"host close command list");
+    ID3D12CommandList* submitted[]={commands.Get()};
+    external.compute_queue->ExecuteCommandLists(1,submitted);
+    ComPtr<ID3D12Fence> fence;
+    hrcheck(external.device->CreateFence(0,D3D12_FENCE_FLAG_NONE,
+                IID_PPV_ARGS(fence.GetAddressOf())),"host fence");
+    hrcheck(external.compute_queue->Signal(fence.Get(),1),"host queue signal");
+    HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    require(event!=nullptr,"host completion event");
+    if (fence->GetCompletedValue()<1) {
+        const HRESULT set=fence->SetEventOnCompletion(1,event);
+        if (FAILED(set)) { CloseHandle(event); hrcheck(set,"host fence event"); }
+        const DWORD result=WaitForSingleObject(event,INFINITE);
+        CloseHandle(event);
+        require(result==WAIT_OBJECT_0,"host waited for queued work");
+    } else CloseHandle(event);
+    require(context.diagnostic_submission_count()==submissions,
+            "host submission cannot change SDK diagnostic counter");
+}
+}
+
+int main(int argc,char** argv) {
+    if(argc!=2)return 2;
+    try {
+        auto first=loxfx::prepare_groom(fixture(0,1),{.followers_per_guide=1});
+        auto second=loxfx::prepare_groom(fixture(5,2),{.followers_per_guide=2});
+        require(first&&second,"groom preparation");
+        gpu::DeviceContext context(argv[1],gpu::AdapterChoice::warp);
+        require(context.native_device()!=nullptr,"native D3D12 WARP device");
+        auto g1=context.prepare_diagnostic(*first);
+        auto g2=context.prepare_diagnostic(*second);
+        require(g1.allocated_buffer_bytes()>0&&g2.allocated_buffer_bytes()>0,
+                "persistent per-groom allocations");
+        const auto initial1=context.diagnostic_read_positions(g1);
+        const auto initial2=context.diagnostic_read_positions(g2);
+        require(initial1[1].y==1.0f&&initial2[1].y==6.0f,
+                "initial D3D12 uploads/readback");
+        require(initial1[5].y==1.0f&&initial2[5].y==6.0f,
+                "follower copies initially untouched");
+
+        constexpr float dt=1.0f/60.0f,g=9.81f;
+        const auto previous=context.diagnostic_submission_count();
+        auto* commands=context.begin_diagnostic_commands();
+        context.record_integration(commands,g1,
+            {.time_step=dt,.gravity=g,.damping=0},3);
+        context.record_integration(commands,g2,
+            {.time_step=dt,.gravity=g,.damping=0},2);
+        require(context.diagnostic_submission_count()==previous,
+                "recording two grooms performs zero queue submissions");
+        context.submit_diagnostic_and_wait();
+        require(context.diagnostic_submission_count()==previous+1,
+                "single explicit D3D12 queue submission");
+        const double gpu_ms=context.last_diagnostic_gpu_milliseconds();
+        auto after1=context.diagnostic_read_positions(g1);
+        auto after2=context.diagnostic_read_positions(g2);
+        const float delta=g*dt*dt;
+        require(std::abs(after1[1].y-(1.0f-6*delta))<0.0001f,
+                "D3D12 three-step Verlet equals Vulkan fixture");
+        require(std::abs(after2[1].y-(6.0f-3*delta))<0.0001f,
+                "D3D12 second groom stays independent");
+        require(after1[0].y==0.0f&&after2[0].y==5.0f,
+                "pinned roots");
+        require(after1[5].y==1.0f&&after2[5].y==6.0f,
+                "follower publication not yet implemented");
+
+        auto* next=context.begin_diagnostic_commands();
+        context.record_integration(next,g1,
+            {.time_step=dt,.gravity=g,.damping=0},1);
+        context.record_integration(next,g2,
+            {.time_step=dt,.gravity=g,.damping=0,
+             .global_stiffness=1.0f,.global_range=1.0f},1);
+        context.submit_diagnostic_and_wait();
+        auto persisted=context.diagnostic_read_positions(g1);
+        auto recovered=context.diagnostic_read_positions(g2);
+        require(std::abs(persisted[1].y-(1.0f-10*delta))<0.0001f,
+                "D3D12 history survives separate GPU submissions");
+        require(std::abs(recovered[1].y-6.0f)<0.0001f,
+                "D3D12 rest-shape restoration");
+
+        // Borrowed handles AddRef but do not take over the host queue.
+        {
+            gpu::DeviceContext borrowed(context.borrowed_handles(),argv[1]);
+            require(borrowed.native_device()==context.native_device(),
+                    "borrowing must not create a new device");
+            auto third=borrowed.prepare_diagnostic(*first);
+            auto* list=borrowed.begin_diagnostic_commands();
+            borrowed.record_integration(list,third,
+                {.time_step=dt,.gravity=g,.damping=0},1);
+            borrowed.submit_diagnostic_and_wait();
+            auto result=borrowed.diagnostic_read_positions(third);
+            require(std::abs(result[1].y-(1.0f-delta))<0.0001f,
+                    "native compute through borrowed D3D12 context");
+        }
+
+        submit_host_commands(context,g1);
+        auto host_result=context.diagnostic_read_positions(g1);
+        require(std::abs(host_result[1].y-(1.0f-15*delta))<0.0001f,
+                "externally allocated command list advances GPU history");
+
+        std::cout<<"D3D12 adapter: "<<context.adapter_name()
+                 <<" (WARP; functionality only)"
+                 <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms
+                 <<"\nPASS: DXIL native compute, independent histories,"
+                   " borrowed context, host-owned command list\n";
+    } catch(const std::exception& e) {
+        std::cerr<<"FAIL: "<<e.what()<<"\n";
+        return 1;
+    }
+    return 0;
+}
