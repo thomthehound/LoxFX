@@ -29,6 +29,32 @@ reproducible GPU and correctness evidence, or documented rejection.
 | OPT-009 | P0 | implemented-awaiting-measurement | Physical GPU baseline | Verify elimination of legacy master/follower over-dispatch |
 | OPT-010 | P1 | blocked | Quality and GPU timing baseline | Higher-fidelity follower interpolation per simulated guide |
 | OPT-011 | P1 | blocked | Multi-groom persistent GPU runtime | Suballocate buffers and manage temporary staging lifetime |
+| OPT-012 | P1 | blocked | Native engine handoff and visual baseline | Avoid diagnostic per-frame CPU strand transfer and reconstruct/render on GPU |
+
+## OPT-012 — Production engine output and diagnostic transfer overhead
+
+**Observation / source:** the initial `adapters/godot/src/loxfx_groom_3d.cpp`
+supports diagnostic packed CPU positions and Godot vertex-buffer updates.
+Its per-frame line-vertex expansion and CPU-to-GPU upload scale with every
+rendered guide and follower. That is an intentional temporary inspection
+path, **not** the eventual native renderer. The existing native Vulkan
+and D3D12 GPU backends already produce resident positions/tangents.
+
+**Suspected cost:** one host-visible position snapshot and an expanded
+line-vertex upload per displayed frame; unmeasured, strongly dependent on
+groom density, frame count and engine renderer.
+
+**Experiment / prerequisite:** once the LoxFX GPU execution boundary and
+Godot native rendering-device lifecycle are demonstrated, compare the
+diagnostic copy path with host-owned GPU-resident strand consumption.
+Measure simulation GPU time, producer/consumer synchronization, transfer
+latency, render cost, frame pacing and visual equivalence on the same scene,
+on both applicable native backends. Keep the standalone SDK baseline.
+
+**Status:** blocked pending GPU interoperability and real visual rendering.
+**Acceptance:** no forced frame-time GPU->CPU readback, accurate quality and
+sync, and quantified transfer/whole-frame improvement on actual hardware.
+No speedup or memory saving is claimed.
 
 ## OPT-001 — Duplicate static follower data
 
