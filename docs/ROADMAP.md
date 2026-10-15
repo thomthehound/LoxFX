@@ -5,6 +5,9 @@
 
 Status: initial working plan, October 2026. Gates are evidence-driven.
 
+See [modernization research and measured options](MODERNIZATION_RESEARCH.md)
+for technique comparisons, performance criteria, and references.
+
 ## Objective
 
 Provide a usable, portable, high-quality, real-time hair/fur SDK for ordinary

@@ -44,7 +44,8 @@ Inspect a TressFX 4.x groom with `loxfx_tfx_inspect path/to/hair.tfx`.
 - Optional integrations with external physics and rendering systems may be
   introduced through explicit, independently maintained interfaces.
 
-See [engineering roadmap](docs/ROADMAP.md) and
+See the [engineering roadmap](docs/ROADMAP.md),
+[modernization research](docs/MODERNIZATION_RESEARCH.md), and
 [reference audit](docs/TRESSFX_REFERENCE.md).
 
 ## Licensing

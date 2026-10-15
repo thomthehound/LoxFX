@@ -3,6 +3,9 @@
 
 # TressFX 4.1 reference and migration map
 
+For candidate modern algorithms, costs and benchmarking priorities, see
+[modernization research](MODERNIZATION_RESEARCH.md).
+
 Reference source: https://github.com/thomthehound/TressFX (AMD TressFX 4.1,
 January 2020). Original work remains under AMD's MIT license. LoxFX does
 not currently incorporate AMD source files.
