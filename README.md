@@ -3,10 +3,10 @@
 
 # LoxFX
 
-LoxFX is an engine-independent, cross-platform hair and fur SDK. It combines
-portable groom processing with real-time GPU strand simulation, using shared
-HLSL across native Vulkan and Direct3D 12 backends. Simulation, rendering,
-and engine integration have separate interfaces and lifecycles.
+LoxFX is an engine-independent, cross-platform SDK for real-time hair and fur.
+Its C++23 core processes and prepares strand-based assets, while native
+Vulkan and Direct3D 12 backends execute simulation stages from shared HLSL.
+The design keeps simulation, rendering, and engine integration decoupled.
 
 LoxFX takes a source-grounded approach to AMD TressFX 4.1: retain useful
 algorithms and asset compatibility, improve data layout and execution,
