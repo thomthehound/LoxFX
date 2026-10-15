@@ -518,6 +518,14 @@ std::uint64_t GroomState::allocated_buffer_bytes() const noexcept {
            impl_->tangents.allocation_bytes;
 }
 
+
+VkBuffer GroomState::positions_buffer() const noexcept {
+    return impl_?impl_->current.handle:VK_NULL_HANDLE;
+}
+VkBuffer GroomState::tangents_buffer() const noexcept {
+    return impl_?impl_->tangents.handle:VK_NULL_HANDLE;
+}
+
 DeviceContext::DeviceContext(const std::filesystem::path& spirv)
 :impl_(std::make_shared<Impl>()){
     impl_->initialize_standalone();
