@@ -52,6 +52,11 @@ jobs:
           project=adapters/godot/tests
           mkdir -p "$project/addons/loxfx/bin" "$project/grooms" build/godot-engine
           cp build/godot/loxfx.gdextension "$project/addons/loxfx/loxfx.gdextension"
+          # An editor import normally generates this list. In a clean
+          # headless runtime project, explicitly register the extension;
+          # otherwise game mode can start without loading its native class.
+          mkdir -p "$project/.godot"
+          printf 'res://addons/loxfx/loxfx.gdextension\n' > "$project/.godot/extension_list.cfg"
           library="$(find build/godot/adapters/godot -name 'libloxfx_godot.so' -print -quit)"
           test -n "$library"
           cp "$library" "$project/addons/loxfx/bin/libloxfx_godot.so"
