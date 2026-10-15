@@ -63,6 +63,10 @@ public:
     // guide-strand dispatch, with no submit/wait/readback.
     // Applies strand-level VSP transforms to guide vertices 2+.
     // Caller records integration and strand-level calculation first.
+    // Guide-local shape correction, following strand motion and VSP.
+    // Stiffness is [0,1]; iterations come from the prepared work plan.
+    void record_local_shape(VkCommandBuffer command_buffer,
+                            const GroomState& groom, float stiffness) const;
     void record_velocity_shock(VkCommandBuffer command_buffer,
                                const GroomState& groom) const;
     void record_strand_level(VkCommandBuffer command_buffer,
