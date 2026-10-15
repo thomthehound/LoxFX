@@ -532,7 +532,11 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
               impl_->device.Get(),g->strand_bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
               D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    auto upload=allocate_buffer(impl_->device.Get(),g->bytes+g->root_history_bytes,D3D12_HEAP_TYPE_UPLOAD,
+    g->guide_rest_lengths=allocate_buffer(impl_->device.Get(),g->guide_length_bytes,
+               D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_FLAG_NONE,
+               D3D12_RESOURCE_STATE_COPY_DEST);
+    auto upload=allocate_buffer(impl_->device.Get(),g->bytes+g->root_history_bytes+
+               g->guide_length_bytes,D3D12_HEAP_TYPE_UPLOAD,
               D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_GENERIC_READ);
     void* mapped=nullptr;
     D3D12_RANGE none{0,0};
@@ -545,6 +549,15 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
         roots[guide*2]=source.rest_positions[first];
         roots[guide*2+1]=source.rest_positions[first+1];
     }
+    float* lengths=reinterpret_cast<float*>(
+        static_cast<char*>(mapped)+g->bytes+g->root_history_bytes);
+    for(std::uint32_t guide=0;guide<source.work.packed_guide_strands;++guide) {
+        const std::size_t base=static_cast<std::size_t>(guide)*
+            (source.followers_per_guide+1)*source.vertices_per_strand;
+        for(std::uint32_t v=0;v<source.vertices_per_strand;++v)
+            lengths[static_cast<std::size_t>(guide)*source.vertices_per_strand+v]=
+                source.rest_segment_lengths[base+v];
+    }
     upload->Unmap(0,nullptr);
 
     auto* cmd=impl_->begin();
@@ -552,12 +565,16 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
         cmd->CopyBufferRegion(target,0,upload.Get(),0,g->bytes);
     cmd->CopyBufferRegion(g->root_previous_previous.Get(),0,
                           upload.Get(),g->bytes,g->root_history_bytes);
+    cmd->CopyBufferRegion(g->guide_rest_lengths.Get(),0,upload.Get(),
+        g->bytes+g->root_history_bytes,g->guide_length_bytes);
     transition(cmd,g->current.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cmd,g->previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cmd,g->rest.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    transition(cmd,g->guide_rest_lengths.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+                         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(cmd,g->root_previous_previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     impl_->submit(); // Diagnostic upload fence only; staging then released.
@@ -666,6 +683,39 @@ void DeviceContext::record_local_shape(ID3D12GraphicsCommandList* cmd,
         uav_barrier(cmd);
         cmd->Dispatch(g.strand_groups,1,1);
     }
+}
+
+void DeviceContext::record_length_wind(ID3D12GraphicsCommandList* cmd,
+             const GroomState& state,const LengthWindParameters& p) const {
+    if(!impl_||!cmd||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("length-wind pass belongs to another D3D12 context");
+    if(!std::isfinite(p.time_step)||p.time_step<=0.0f||p.time_step>0.1f||
+       !std::isfinite(p.maximum_position_delta)||p.maximum_position_delta<0.0f||
+       p.length_iterations>64u)
+        throw std::invalid_argument("invalid length-wind parameters");
+    for(const auto& w:p.winds)
+        if(!std::isfinite(w.x)||!std::isfinite(w.y)||!std::isfinite(w.z))
+            throw std::invalid_argument("nonfinite wind parameters");
+    const auto& g=*state.impl_;
+    struct LengthConstants {
+        std::uint32_t vertices,followers,guides,iterations;
+        float dt,clamp,zero0,zero1;
+        std::array<Float4,4> winds;
+    };
+    static_assert(sizeof(LengthConstants)==96);
+    const LengthConstants c{g.vertices,g.followers,g.guides,
+        p.length_iterations,p.time_step,p.maximum_position_delta,0,0,p.winds};
+    uav_barrier(cmd);
+    cmd->SetComputeRootSignature(impl_->strand_root_signature.Get());
+    cmd->SetPipelineState(impl_->length_wind_pipeline.Get());
+    cmd->SetComputeRootUnorderedAccessView(0,g.current->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(1,g.previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(2,g.root_previous_previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
+    cmd->SetComputeRootShaderResourceView(5,g.rest->GetGPUVirtualAddress());
+    cmd->SetComputeRootShaderResourceView(6,g.guide_rest_lengths->GetGPUVirtualAddress());
+    cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
+    cmd->Dispatch(g.groups,1,1);
 }
 
 ID3D12GraphicsCommandList* DeviceContext::begin_diagnostic_commands(){
