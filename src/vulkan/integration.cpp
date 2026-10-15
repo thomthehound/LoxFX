@@ -145,9 +145,11 @@ struct IntegrationRuntime::Impl {
                 continue;
             found_type = true;
             alloc.memoryTypeIndex = i;
+            VkDeviceMemory attempted_memory = VK_NULL_HANDLE;
             const VkResult attempt =
-                vkAllocateMemory(device, &alloc, nullptr, &result.memory);
+                vkAllocateMemory(device, &alloc, nullptr, &attempted_memory);
             if (attempt == VK_SUCCESS) {
+                result.memory = attempted_memory;
                 result.allocation_bytes = alloc.allocationSize;
                 vk_check(vkBindBufferMemory(device, result.buffer, result.memory, 0),
                          "bind buffer");
