@@ -24,8 +24,9 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
 // THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-// This initial stage tests pinned roots, Verlet integration, and global
-// rest-shape matching on STATIC attachments, not the complete six-stage port.
+// This experimental first stage tests pinned/moving translated attachments,
+// Verlet integration, and global rest-shape matching. It is NOT skeletal
+// skinning or the complete six-stage simulation.
 
 struct Parameters {
     uint vertices_per_strand;
@@ -89,7 +90,7 @@ void IntegrationAndGlobalShapeConstraints(
             next.xyz += params.global_stiffness * (rest.xyz - next.xyz);
         }
     } else {
-        next = rest; // immovable scalp attachment, static for now
+        next = rest; // pinned scalp attachment follows the host translation
     }
     // Reference UpdateFinalVertexPositions saves the older previous state
     // before updating it. Only the two guide-root vertices are consumed by

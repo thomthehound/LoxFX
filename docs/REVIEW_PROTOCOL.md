@@ -102,3 +102,46 @@ and moving-root fidelity, frame-to-renderer publication, plus matched
 reference visual-quality and whole-scene throughput. WARP execution
 validates functionality only. The new implementation stays non-exported
 until product integration contracts mature.
+
+## Applied independent review — PR #15 (moving roots/history, 15 October 2026)
+
+**Architecture and source audit:** Compared the shared first-stage HLSL
+against TressFX 4.1 `IntegrationAndGlobalShapeConstraints` and
+`UpdateFinalVertexPositions`, and traced `CalculateStrandLevelData`
+consumers. That next stage reads *current, previous and previous-previous*
+positions of **only the first two guide vertices**. The new compact
+`2 * padded_guides` history buffer preserves the source's order
+(`old previous` stored before updating `previous`). The current
+translation primitive is intentionally not claimed as full bone
+skinning or complete strand-motion support.
+
+**Cross-backend bindings and memory:** Vulkan declares the fourth storage
+buffer at set 0/binding 3, updates the standalone and borrowed device
+descriptor-limit admission, and uploads/reads the compact buffer with
+existing diagnostic synchronization. D3D12 declares a matching root UAV
+at `u3`, uses the shared 48-byte root constants, initializes and
+transitions the committed history buffer, and records UAV barriers between
+dependent steps. Neither path adds CPU readback or resource setup during
+the stage's per-frame record operation.
+
+**Regression from merged PR #14:** Borrowed D3D12 queues now query their
+owning device and compare canonical COM `IUnknown` identities with the
+host's device before retaining the handles. Tests verify ordinary borrowed
+compute/direct queues. An attempted cross-device negative test is **only
+executed when two distinct device identities exist**: WARP often returns
+the same cached device, so CI must never falsely claim the mismatch test
+ran on a single-device runner.
+
+**Additional review coverage:** Tests already exercised dynamic vertex-1
+motion history and cross-groom isolation. This review added a paired
+Vulkan/D3D12 fixture with **both proximal guide vertices pinned**,
+moving together under three successive attachment translations; the
+previous-previous history then retains both correctly translated
+attachments. This supplies a rigid-motion baseline for upcoming strand
+rotation/translation work.
+
+**Still deferred, not defects to disguise:** per-strand skinning,
+rotation, strand-data output and VSP, reset/teleport behavior,
+rendering/publication, frames in flight, physical-GPU performance and
+reference-quality imagery. OPT-001/002/003/009/011 remain tracked.
+No claimed throughput or visual improvement is inferred from software CI.
