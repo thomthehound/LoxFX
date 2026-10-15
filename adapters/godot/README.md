@@ -96,10 +96,14 @@ Provide `dxc` and the Vulkan SDK (Linux) or Windows D3D12 SDK (Windows).
 The existing source-derived Vulkan/D3D12 backend targets and their shared
 HLSL shaders are compiled alongside the extension **but remain internal**.
 The extension does not inherit Godot's graphics device or scheduler: it
-uses one LoxFX-owned standalone diagnostic device context for each native
-groom, then waits for the complete batch and copies finished positions
-through CPU memory into Godot's dynamic line vertex buffer. It cannot
-establish production game-engine performance or native resource interop.
+shares one LoxFX-owned standalone diagnostic device and six-stage pipeline
+collection across grooms using the same shader package and adapter choice.
+Each groom holds independent GPU simulation state, and the shared device is
+released when its final groom stops. Because the diagnostic command allocator
+and queue are shared, each groom's complete record/submit/readback transaction
+is serialized. Completed positions then cross through CPU memory into Godot's
+dynamic line vertex buffer. Neither serialized diagnostics nor the CPU bridge
+establishes production game-engine performance or native resource interop.
 
 Package all six compiled `.spv` files (Linux) or `.dxil` files (Windows)
 from `build/godot/shaders/` beside your extension. After
