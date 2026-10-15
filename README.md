@@ -33,6 +33,16 @@ ctest --test-dir build -C Release --output-on-failure
 
 Inspect a TressFX 4.x groom with `loxfx_tfx_inspect path/to/hair.tfx`.
 
+Install and consume LoxFX as a standalone CMake package:
+
+```sh
+cmake --install build --config Release --prefix /path/to/loxfx-install
+```
+
+Downstream projects can use `find_package(LoxFX CONFIG REQUIRED)` and
+`target_link_libraries(app PRIVATE LoxFX::Core)`. The package exports its
+C++23 requirement. The public ABI is not yet frozen.
+
 ## Direction
 
 - Vulkan 1.4 and D3D12 Shader Model 6.6 are the intended shipping GPU floors;

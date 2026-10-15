@@ -9,6 +9,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CTest)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 add_library(loxfx_core STATIC src/tfx_import.cpp)
 add_library(LoxFX::Core ALIAS loxfx_core)
@@ -16,7 +18,9 @@ target_compile_features(loxfx_core PUBLIC cxx_std_23)
 target_include_directories(loxfx_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-set_target_properties(loxfx_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(loxfx_core PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+  EXPORT_NAME Core)
 if(MSVC)
   target_compile_options(loxfx_core PRIVATE /W4)
 else()
@@ -34,3 +38,26 @@ if(BUILD_TESTING)
   target_link_libraries(loxfx_tfx_import_tests PRIVATE LoxFX::Core)
   add_test(NAME loxfx_tfx_import COMMAND loxfx_tfx_import_tests)
 endif()
+
+# Public, relocatable CMake package for independently built consumers.
+install(TARGETS loxfx_core EXPORT LoxFXTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT LoxFXTargets
+  FILE LoxFXTargets.cmake
+  NAMESPACE LoxFX::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LoxFX)
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LoxFXConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/LoxFXConfig.cmake"
+  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LoxFX")
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/LoxFXConfigVersion.cmake"
+  VERSION "${PROJECT_VERSION}"
+  COMPATIBILITY SameMajorVersion)
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/LoxFXConfig.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/LoxFXConfigVersion.cmake"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LoxFX")

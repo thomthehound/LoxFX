@@ -67,7 +67,8 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 ### M0 — Ground truth and ingest (initial)
 
 - [x] Separate Apache-2.0 LoxFX history from TressFX reference history.
-- [x] Establish buildable standalone C++ core and Windows/Linux CPU CI.
+- [x] Establish buildable standalone C++ core, installable CMake package,
+  and Windows/Linux CPU CI.
 - [x] Import TressFX 4.x guide vertices and optional attributes with
   bounds checking and no implicit GPU-specific padding.
 - [ ] Test actual AMD reference assets; measure importer costs and examine
