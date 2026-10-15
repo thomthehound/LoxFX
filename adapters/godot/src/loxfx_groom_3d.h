@@ -21,7 +21,6 @@ class LoxFXGroom3D final : public ::godot::MeshInstance3D {
     std::optional<PreparedGroom> groom_;
     ::godot::Ref<::godot::ArrayMesh> lines_;
     ::godot::String error_;
-    std::uint64_t displayed_guide_count_ = 0;
 
     bool update_lines(const ::godot::PackedVector3Array& packed_positions,
                       bool first_upload);
