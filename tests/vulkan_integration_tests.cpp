@@ -331,7 +331,7 @@ int main(int argc,char** argv) {
         // the actual 179.x-degree turn, not snap to an arbitrary 180.
         // First vertex is pinned; the second falls from (offset,+1,0)
         // to (offset,-1,0) in one Verlet step (g*dt^2 == 2).
-        for(float transverse : {0.007f,0.000087f,0.0f}) {
+        for(float transverse : {0.008f,0.007f,-0.007f,0.000087f,0.0f}) {
             auto hair=fixture(0.0f,1);
             hair.positions[1].x=transverse;
             auto prepared=loxfx::prepare_groom(hair,{.followers_per_guide=1});
@@ -345,7 +345,7 @@ int main(int argc,char** argv) {
             context.submit_diagnostic_and_wait();
             const auto motion=context.diagnostic_read_strand_data(gpu);
             const auto q=motion[0].vsp_quaternion;
-            const float expected_w=transverse/std::sqrt(1.0f+transverse*transverse);
+            const float expected_w=std::abs(transverse)/std::sqrt(1.0f+transverse*transverse);
             check(std::isfinite(q.x)&&std::isfinite(q.y)&&
                   std::isfinite(q.z)&&std::isfinite(q.w),
                   "near-antiparallel rotation quaternion remains finite");

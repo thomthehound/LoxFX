@@ -167,3 +167,15 @@ head → mark PR ready → allow the configured automatic review to finish
 when available → address any findings → merge after approval. Never
 misrepresent a pending code review as a passed code review, and don't
 require an unavailable bot to block productive work indefinitely.
+
+## Codex P2 correction — PR #16 near-antiparallel quaternions
+
+The first quaternion fallback treated every `dot < -0.9999` as an
+exact reversal. A visually significant 179.2-degree motion could lose
+its true angle and misplace VSP-driven downstream vertices. Corrected
+in canonical HLSL with a cancellation-resistant half-angle calculation,
+retaining an arbitrary-axis fallback only for essentially exact opposite
+vectors. Both native GPU test suites now verify quaternion *action* on
+the old proximal direction for near-180-degree turns, signed axes,
+threshold-adjacent angles and exact reversal. Keep this test in place
+when integrating third-stage velocity shock propagation.

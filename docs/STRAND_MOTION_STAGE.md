@@ -59,3 +59,20 @@ skeletal-reference equivalence. Keep OPT-001/002/003/009/011 open.
 **Hard goals:** visual quality at least matching reference, preferably
 substantially better; and lower total GPU frame time on physical GPUs
 at matched-or-higher visual quality, not favorable isolated kernels.
+
+## Near-antiparallel rotation regression (Codex P2, PR #16)
+
+The first implementation snapped any proximal-segment rotation with
+`dot(a,b) < -0.9999` (roughly 179.2–180 degrees) to an *exact*
+180-degree quaternion. That discarded the actual motion axis/angle.
+The shared HLSL now computes the near-opposite half-angle from
+`|a+b|/2` and the axis from `cross(a,b)`, retaining rotations
+near 180 even when the scalar dot product rounds to -1. An arbitrary
+orthogonal axis is used only when the vectors are numerically
+indistinguishable from exact opposites (vanishing cross product).
+
+Matched Vulkan and D3D12 GPU regressions test turns on both sides of
+the former threshold, positive/negative axis directions, an almost-exact
+reversal, and an exact 180-degree case. They verify that applying the
+stored quaternion maps the *previous* guide-root segment to the actual
+*new* segment, not just that a quaternion value looks plausible.
