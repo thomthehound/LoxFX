@@ -73,3 +73,31 @@ nothing marked `done` without measurements.
 
 This record is a review of the **draft internal smoke harness**, not a
 declaration that a production simulation runtime or D3D12 backend is ready.
+
+## Applied review — PR #14 (native D3D12 integration stage)
+
+**Architecture:** D3D12 is a distinct native backend using the same
+neutral `PreparedGroom`, `IntegrationParameters`, and HLSL physics as
+Vulkan. One context owns the selected device, root signature and pipeline;
+groom states share its lifetime and own only committed buffers. Optional
+borrowed devices/queues use COM references. No per-groom device creation
+or CPU wait inside `record_integration`.
+
+**Correctness:** The Windows WARP test executes actual DXIL compute and
+checks the same static-root Verlet, pinned root, independent follower
+state, global-rest-shape and cross-submission numerical fixtures as Vulkan.
+Host command list/queue/fence ownership and borrowed **COMPUTE and DIRECT**
+queues have separate execution checks.
+
+**Performance discipline:** The integration stage uses root SRV/UAV
+descriptors and 48-byte root constants without a descriptor heap,
+per-step upload, or per-step CPU readback. These are design properties,
+**not measured speedups**. Device feature checks occur once at context
+creation, not per-step. Committed buffer sizes are reported with
+`GetResourceAllocationInfo`. OPT-001/002/003/009/011 remain open.
+
+**Remaining gates:** physical D3D12 and Vulkan performance, full six-stage
+and moving-root fidelity, frame-to-renderer publication, plus matched
+reference visual-quality and whole-scene throughput. WARP execution
+validates functionality only. The new implementation stays non-exported
+until product integration contracts mature.
