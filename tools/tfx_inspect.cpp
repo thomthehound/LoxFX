@@ -18,19 +18,30 @@ int main(int argc, char** argv) {
         std::cerr << "Usage: loxfx_tfx_inspect <asset.tfx> [followers-per-guide] [--prepare]\n";
         return 2;
     }
-    const bool prepare = argc == 4;
-    if (prepare && std::string_view{argv[3]} != "--prepare") {
-        std::cerr << "Unknown option (expected --prepare)\n";
-        return 2;
-    }
+    bool prepare = false;
+    bool has_follower_count = false;
     std::uint32_t followers = 0;
-    if (argc >= 3) {
-        const std::string_view input{argv[2]};
-        const auto [end, ec] = std::from_chars(input.data(), input.data() + input.size(), followers);
+    for (int arg = 2; arg < argc; ++arg) {
+        const std::string_view input{argv[arg]};
+        if (input == "--prepare") {
+            if (prepare) {
+                std::cerr << "Duplicate --prepare option\n";
+                return 2;
+            }
+            prepare = true;
+            continue;
+        }
+        if (has_follower_count) {
+            std::cerr << "Only one follower count may be supplied\n";
+            return 2;
+        }
+        const auto [end, ec] = std::from_chars(
+            input.data(), input.data() + input.size(), followers);
         if (ec != std::errc{} || end != input.data() + input.size()) {
             std::cerr << "Follower count must be a nonnegative integer\n";
             return 2;
         }
+        has_follower_count = true;
     }
     std::ifstream input(argv[1], std::ios::binary);
     if (!input) {
