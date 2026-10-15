@@ -112,11 +112,11 @@ if(LOXFX_BUILD_VULKAN_SMOKE)
   endif()
   # Neither prototype library nor its shader is installed or exported.
   if(BUILD_TESTING)
-    add_executable(loxfx_vulkan_smoke_integration_tests tests/vulkan_integration_tests.cpp)
-    target_link_libraries(loxfx_vulkan_smoke_integration_tests PRIVATE loxfx_vulkan_smoke)
-    add_dependencies(loxfx_vulkan_smoke_integration_tests loxfx_integration_shader)
-    add_test(NAME loxfx_vulkan_smoke_integration
-      COMMAND loxfx_vulkan_smoke_integration_tests "${LOXFX_INTEGRATION_SPV}")
+    add_executable(loxfx_vulkan_integration_tests tests/vulkan_integration_tests.cpp)
+    target_link_libraries(loxfx_vulkan_integration_tests PRIVATE loxfx_vulkan_smoke)
+    add_dependencies(loxfx_vulkan_integration_tests loxfx_integration_shader)
+    add_test(NAME loxfx_vulkan_integration
+      COMMAND loxfx_vulkan_integration_tests "${LOXFX_INTEGRATION_SPV}")
   endif()
 endif()
 
