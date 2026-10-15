@@ -569,7 +569,7 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         impl_->physical,impl_->device,guide_length_bytes,storage|transfer,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,10};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,12};
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool.maxSets=2;
     pool.poolSizeCount=1;
@@ -590,13 +590,14 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
            "create groom descriptor sets");
     groom->set=sets[0];
     groom->strand_set=sets[1];
-    std::array<VkDescriptorBufferInfo,5> info{{
+    std::array<VkDescriptorBufferInfo,6> info{{
        {groom->current.handle,0,bytes},
        {groom->previous.handle,0,bytes},
        {groom->rest.handle,0,bytes},
        {groom->root_previous_previous.handle,0,root_bytes},
-       {groom->rest.handle,0,bytes}}};
-    std::array<VkWriteDescriptorSet,5> writes{};
+       {groom->rest.handle,0,bytes},
+       {groom->guide_rest_lengths.handle,0,guide_length_bytes}}};
+    std::array<VkWriteDescriptorSet,6> writes{};
     for(std::uint32_t i=0;i<writes.size();++i){
         writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet=groom->set;
@@ -605,13 +606,14 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         writes[i].descriptorCount=1;
         writes[i].pBufferInfo=&info[i];
     }
-    std::array<VkDescriptorBufferInfo,5> motion_info{{
+    std::array<VkDescriptorBufferInfo,6> motion_info{{
        {groom->current.handle,0,bytes},
        {groom->previous.handle,0,bytes},
        {groom->root_previous_previous.handle,0,root_bytes},
        {groom->strand_data.handle,0,strand_bytes},
-       {groom->rest.handle,0,bytes}}};
-    std::array<VkWriteDescriptorSet,5> motion_writes{};
+       {groom->rest.handle,0,bytes},
+       {groom->guide_rest_lengths.handle,0,guide_length_bytes}}};
+    std::array<VkWriteDescriptorSet,6> motion_writes{};
     for(std::uint32_t i=0;i<motion_writes.size();++i){
         motion_writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         motion_writes[i].dstSet=groom->strand_set;
@@ -628,12 +630,12 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     // One temporary staging image, reclaimed immediately AFTER the explicit
     // initialization submit has completed. Never retained by a groom.
     Buffer staging;
-    staging.create(impl_->physical,impl_->device,bytes+root_bytes,
+    staging.create(impl_->physical,impl_->device,bytes+root_bytes+guide_length_bytes,
                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped=nullptr;
     creation_checkpoint();
-    verify(vkMapMemory(impl_->device,staging.memory,0,bytes+root_bytes,0,&mapped),
+    verify(vkMapMemory(impl_->device,staging.memory,0,bytes+root_bytes+guide_length_bytes,0,&mapped),
            "map initial upload");
     std::memcpy(mapped,source.rest_positions.data(),static_cast<std::size_t>(bytes));
     auto* roots=reinterpret_cast<Float4*>(static_cast<char*>(mapped)+bytes);
@@ -642,6 +644,15 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
             (source.followers_per_guide+1)*source.vertices_per_strand;
         roots[guide*2]=source.rest_positions[first];
         roots[guide*2+1]=source.rest_positions[first+1];
+    }
+    float* lengths=reinterpret_cast<float*>(
+        static_cast<char*>(mapped)+bytes+root_bytes);
+    for(std::uint32_t guide=0;guide<source.work.packed_guide_strands;++guide) {
+        const std::size_t base=static_cast<std::size_t>(guide)*
+            (source.followers_per_guide+1)*source.vertices_per_strand;
+        for(std::uint32_t v=0;v<source.vertices_per_strand;++v)
+            lengths[static_cast<std::size_t>(guide)*source.vertices_per_strand+v]=
+                source.rest_segment_lengths[base+v];
     }
     vkUnmapMemory(impl_->device,staging.memory);
     auto cb=impl_->begin_diagnostics();
@@ -655,6 +666,11 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     roots_copy.size=root_bytes;
     vkCmdCopyBuffer(cb,staging.handle,
                     groom->root_previous_previous.handle,1,&roots_copy);
+    VkBufferCopy length_copy{};
+    length_copy.srcOffset=bytes+root_bytes;
+    length_copy.size=guide_length_bytes;
+    vkCmdCopyBuffer(cb,staging.handle,
+                    groom->guide_rest_lengths.handle,1,&length_copy);
     memory_barrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,
                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                    VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
@@ -768,6 +784,37 @@ void DeviceContext::record_local_shape(VkCommandBuffer cb,const GroomState& stat
         vkCmdDispatch(cb,g.strand_groups,1,1);
     }
 }
+void DeviceContext::record_length_wind(VkCommandBuffer cb,const GroomState& state,
+                                       const LengthWindParameters& p) const {
+    if(!impl_||!cb||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("length-wind pass belongs to another Vulkan context");
+    if(!std::isfinite(p.time_step)||p.time_step<=0.0f||p.time_step>0.1f||
+       !std::isfinite(p.maximum_position_delta)||p.maximum_position_delta<0.0f||
+       p.length_iterations>64u)
+        throw std::invalid_argument("invalid length-wind parameters");
+    for(const auto& w:p.winds)
+        if(!std::isfinite(w.x)||!std::isfinite(w.y)||!std::isfinite(w.z))
+            throw std::invalid_argument("nonfinite wind parameters");
+    const auto& g=*state.impl_;
+    struct LengthConstants {
+        std::uint32_t vertices,followers,guides,iterations;
+        float dt,clamp,zero0,zero1;
+        std::array<Float4,4> winds;
+    };
+    static_assert(sizeof(LengthConstants)==96);
+    const LengthConstants c{g.vertices,g.followers,g.guides,
+        p.length_iterations,p.time_step,p.maximum_position_delta,0,0,p.winds};
+    memory_barrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+    vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->length_wind_pipeline);
+    vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipeline_layout,
+                            0,1,&g.strand_set,0,nullptr);
+    vkCmdPushConstants(cb,impl_->pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
+                       0,sizeof(c),&c);
+    vkCmdDispatch(cb,g.groups,1,1);
+}
+
 VkCommandBuffer DeviceContext::begin_diagnostic_commands(){
     if(!impl_)throw std::logic_error("context was moved");
     return impl_->begin_diagnostics();
