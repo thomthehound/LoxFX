@@ -6,7 +6,9 @@ func _initialize() -> void:
 func _run() -> void:
     assert(ClassDB.class_exists("LoxFXGroom3D"),
         "GDExtension class did not register")
-    var instance: Node = ClassDB.instantiate("LoxFXGroom3D")
+    # Keep the extension object dynamically typed: Godot's script analyzer
+    # knows MeshInstance3D, but not this native class's extra methods.
+    var instance: Variant = ClassDB.instantiate("LoxFXGroom3D")
     assert(instance != null, "Could not instantiate native groom node")
     root.add_child(instance)
 
