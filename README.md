@@ -42,9 +42,9 @@ LoxFX follows the six-stage TressFX guide-strand execution model:
 6. **Follower update** — expand simulated guides into renderable hair.
 
 The next milestone is stage-three execution on both APIs, followed by
-the remaining constraints, collision, follower publication, and complete
-skeletal attachments. Physical-GPU profiling and visual comparisons will
-qualify the resulting pipeline.
+skeletal attachments, strand constraints, wind and collision, and follower
+publication. Physical-GPU profiling and visual comparisons will qualify
+the resulting pipeline.
 
 ## Build the core
 
