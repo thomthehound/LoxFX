@@ -30,6 +30,8 @@ class LoxFXGroom3D final : public ::godot::MeshInstance3D {
 #if defined(LOXFX_GODOT_NATIVE_DIAGNOSTIC)
     std::unique_ptr<NativeDiagnostic> native_;
     std::uint64_t native_frames_ = 0;
+    ::godot::Vector3 native_last_root_{};
+    bool native_root_valid_ = false;
 #endif
 
     bool update_lines(const ::godot::PackedVector3Array& packed_positions,
@@ -55,6 +57,7 @@ public:
     void stop_native_diagnostic();
     bool is_native_diagnostic_active() const;
     int get_native_diagnostic_steps() const;
+    ::godot::Vector3 get_native_diagnostic_root_position() const;
     ::godot::String get_native_diagnostic_backend() const;
 
     bool load_tfx_bytes(const ::godot::PackedByteArray& tfx,
