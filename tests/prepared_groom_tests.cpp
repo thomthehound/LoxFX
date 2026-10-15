@@ -65,6 +65,10 @@ void followers_and_repeatability() {
     check(prepared->follower_root_offsets[1].z == repeated->follower_root_offsets[1].z,
           "offset z deterministic");
     const auto& offset = prepared->follower_root_offsets[1];
+    check(prepared->follower_root_offsets[0].w == 0.0f,
+          "guide root offset has no tip expansion");
+    check(offset.w == settings.follower_tip_separation,
+          "follower tip expansion travels with compact offset metadata");
     check(std::abs(offset.x) <= settings.follower_root_radius + 0.0001f,
           "offset within square bounds");
     check(std::abs(offset.z) <= settings.follower_root_radius + 0.0001f,
