@@ -22,6 +22,21 @@ set(LOXFX_GODOT_CPP_SOURCE_DIR "" CACHE PATH "Existing godot-cpp checkout")
 set(LOXFX_GODOT_COMPATIBILITY_MINIMUM "4.7" CACHE STRING
   "Oldest Godot minor version supported by the selected generated bindings")
 
+# godot-cpp selects the MSVC runtime through CMAKE_MSVC_RUNTIME_LIBRARY.
+# Set this once, *before any LoxFX target exists*, so the core, tools, tests
+# and native adapter cannot silently mix /MD with godot-cpp's default /MT.
+# Respect a toolchain or parent project that has already chosen a runtime.
+if(LOXFX_BUILD_GODOT_ADAPTER AND MSVC AND
+   NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+  option(GODOTCPP_USE_STATIC_CPP
+    "Link Godot C++ runtime libraries statically" ON)
+  option(GODOTCPP_DEBUG_CRT
+    "Build godot-cpp with the MSVC debug dynamic CRT" OFF)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY
+    "MultiThreaded$<IF:$<BOOL:${GODOTCPP_DEBUG_CRT}>,DebugDLL,$<$<NOT:$<BOOL:${GODOTCPP_USE_STATIC_CPP}>>:DLL>>"
+    CACHE STRING "MSVC runtime shared by LoxFX and godot-cpp")
+endif()
+
 add_library(loxfx_core STATIC
   src/tfx_import.cpp
   src/simulation_work.cpp
