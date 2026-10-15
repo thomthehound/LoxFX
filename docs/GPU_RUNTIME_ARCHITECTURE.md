@@ -178,6 +178,15 @@ unconditionally persistent upload staging.
 5. Continue stages 2–6 only after the source host DAG/resource map is
    satisfied and real-hardware GPU timing infrastructure exists.
 
+## Priority and review proportionality
+
+The product gates are **visual quality at least as good as reference,
+preferably substantially better, with lower full-frame GPU cost at
+matched/better quality**. RAII correctness matters, but it is not a mandate
+to recover from every hypothetical driver error. Normal clear failure and
+resource cleanup generally suffice. Prioritize useful performance and
+visual-fidelity work over speculative retry frameworks.
+
 ## Merge gate
 
 Do not declare the PR ready solely for green CI or disappearance of

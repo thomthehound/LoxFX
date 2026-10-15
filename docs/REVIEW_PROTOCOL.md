@@ -21,8 +21,9 @@ more than the number of checks performed.
 2. **Negative-case review.** Identify invalid public inputs, mutable asset
    metadata, integer overflow, GPU device limits, failed resource creation,
    allocation failure, partial initialization, context/groom destruction
-   ordering, and cross-frame GPU-in-flight hazards. Exercise realistic faults,
-   then prove that a subsequent valid operation still works.
+   ordering, and cross-frame GPU-in-flight hazards. Exercise representative
+   failures to prove ordinary cleanup; avoid exhaustive driver-return-code
+   recovery or speculative fault-injection without an actual product need.
 3. **Parity and API boundary.** Check the same shader and neutral physics
    contracts on Vulkan and D3D12. A compiler output is not runtime parity.
    Confirm experimental code is not inadvertently exported or installed.

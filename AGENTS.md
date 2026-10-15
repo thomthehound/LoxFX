@@ -27,9 +27,19 @@ important decisions across sessions.
 - Preserve source-grounded simulation behavior, data ownership, dispatch
   dependencies, synchronization and publication when porting TressFX.
   Deliberate departures require reasons and correctness comparisons.
+- **Primary product gates:** hair dynamics/rendering must match or
+  exceed the reference's visual quality, preferably materially improve it,
+  while delivering lower full-frame cost at matched-or-better quality on
+  real consumer GPUs. Prioritize this over engineering novelty and
+  speculative robustness work.
 - Favor high throughput and practical fidelity on consumer GPUs. CI passing
   does not prove hardware performance, and reductions in theoretical
   thread counts or buffer bytes are **not** measured speedups.
+- Handle ordinary resource errors predictably and release owned resources.
+  **Do not build exhaustive driver-error recovery machinery or demand a
+  test for every possible driver return code without a demonstrated need.**
+  Apply proportionate review effort, focusing on source fidelity,
+  frame-time costs, memory traffic, GPU orchestration and visual results.
 - Keep authored data separate from GPU packing and backend-specific handles;
   do not add mandatory engine or physics dependencies.
 - Do not mandate research-grade techniques or exotic accelerator features
