@@ -88,6 +88,9 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
   unused follower work; implement checked source-aligned guide-work planning.
 - [x] Prepare interleaved persistent guide/follower buffers, rest lengths,
   tangents and provenance without modifying imported authoring data.
+- [x] Add an opt-in native Vulkan/DXC integration-stage runner with
+  persistent GPU buffers, explicit synchronization, readback tests and GPU
+  timestamps (first stage only; not full simulation).
 - [ ] Build a native GPU executor for the whole source stage chain; the
   work-plan alone does not simulate hair or validate a shader port.
 

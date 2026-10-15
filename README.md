@@ -48,6 +48,28 @@ Downstream projects can use `find_package(LoxFX CONFIG REQUIRED)` and
 `target_link_libraries(app PRIVATE LoxFX::Core)`. The package exports its
 C++23 requirement. The public ABI is not yet frozen.
 
+## Optional Vulkan integration milestone
+
+A native Vulkan module can compile and execute the **first** TressFX-inspired
+simulation stage on persistent GPU buffers. It tests static-root Verlet
+integration with explicit command submission, GPU memory barriers, diagnostic
+readback and device timestamps. **It is not yet a six-stage hair simulator**;
+bone skinning, full constraint solving, collisions and follower publication
+remain pending.
+
+Build with the Vulkan SDK and an installed DXC executable:
+
+```sh
+cmake -S . -B build/gpu -DLOXFX_ENABLE_VULKAN=ON -DBUILD_TESTING=ON
+cmake --build build/gpu --config Release
+ctest --test-dir build/gpu -C Release -R loxfx_vulkan_integration -V
+```
+
+The module is opt-in so the CPU library remains dependency-free. CI executes
+the stage through Mesa software Vulkan for functional validation, **not**
+representative GPU performance. Hardware qualification remains required.
+See [stage-one execution notes](docs/VULKAN_STAGE_ONE.md).
+
 ## Direction
 
 - Vulkan 1.4 and D3D12 Shader Model 6.6 are the intended shipping GPU floors;

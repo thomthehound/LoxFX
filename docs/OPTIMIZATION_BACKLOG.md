@@ -204,6 +204,11 @@ memory and perceptual error. See
 - **2026-10-15, PR #3:** Deterministic prepared interleaved follower data,
   real Ratboy smoke tests and static upload sizes. Retain current
   correctness path until GPU buffer consumers are audited (OPT-001/002).
+- **2026-10-15, Vulkan stage-one:** Persistent current/previous/rest device
+  buffers and a single source-derived integration pass added as an opt-in
+  native Vulkan runner. The synchronous batch fence is a correctness harness,
+  not the production frame scheduler (OPT-003). Full-strand static/history
+  allocations remain for now (OPT-001, OPT-002). Hardware timings pending.
 - **2026-10-15:** Created this canonical list and required capture rule in
   `AGENTS.md`. No physical-GPU performance data exists yet.
 

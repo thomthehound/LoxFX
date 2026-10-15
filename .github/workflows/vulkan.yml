@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+
+name: Vulkan integration stage
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  vulkan-software-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Vulkan software device and headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers vulkan-tools
+      - name: Install official DXC for shader validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dxc"
+          curl --fail --location --retry 3 \
+            https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP/dxc"
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/dxc/lib" >> "$GITHUB_ENV"
+      - name: Configure
+        run: cmake -S . -B build/gpu -DLOXFX_ENABLE_VULKAN=ON -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build HLSL and Vulkan runner
+        run: cmake --build build/gpu --parallel 2
+      - name: Execute compute shader on software Vulkan
+        run: |
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
+          ctest --test-dir build/gpu --output-on-failure -R '^loxfx_vulkan_integration$' -V
