@@ -3,6 +3,7 @@
 #pragma once
 
 #include "loxfx/prepared_groom.h"
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -27,6 +28,9 @@ public:
                 float root_z, float wind_x, float wind_y, float wind_z);
     [[nodiscard]] const char* backend_name() const noexcept;
     [[nodiscard]] bool software_device() const noexcept;
+    // Diagnostic instrumentation: count active, separately owned device
+    // contexts (not grooms). Useful for multi-groom regression checks.
+    [[nodiscard]] static std::uint32_t active_context_count() noexcept;
 
 private:
     struct Impl;
