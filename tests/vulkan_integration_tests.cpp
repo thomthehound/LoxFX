@@ -617,6 +617,30 @@ int main(int argc,char** argv) {
                           "Vulkan follower tangents copy guide final direction");
             }
         }
+        // OPT-001 regression: no follower rest-vertex reads during GPU
+        // publication. Disturb the prepared follower rest positions while
+        // retaining the canonical compact offset records and guide rest.
+        auto compact_only=*follow_prep;
+        for(std::uint32_t strand=1;strand<=2u;++strand)
+            for(std::uint32_t v=0;v<4u;++v) {
+                auto& p=compact_only.rest_positions[strand*4u+v];
+                p.x+=10.0f; p.y-=7.0f; p.z+=5.0f;
+            }
+        auto compact_gpu=context.prepare(compact_only);
+        auto compact_cmd=context.begin_diagnostic_commands();
+        context.record_followers(compact_cmd,compact_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto compact_result=context.diagnostic_read_positions(compact_gpu);
+        for(std::uint32_t strand=1;strand<=2u;++strand)
+            for(std::uint32_t v=0;v<4u;++v) {
+                const auto i=strand*4u+v;
+                const auto& original=follow_prep->rest_positions[i];
+                check(std::abs(compact_result[i].x-original.x)<0.0003f &&
+                      std::abs(compact_result[i].y-original.y)<0.0003f &&
+                      std::abs(compact_result[i].z-original.z)<0.0003f,
+                      "Vulkan publication requires only compact offsets, not follower rest vertices");
+            }
+
         auto repeat_cmd=context.begin_diagnostic_commands();
         context.record_followers(repeat_cmd,follow_gpu);
         context.submit_diagnostic_and_wait();
