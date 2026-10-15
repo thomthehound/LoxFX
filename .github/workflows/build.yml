@@ -27,6 +27,26 @@ jobs:
         run: cmake --build build --config Release --parallel 2
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Reference TressFX 4.1 groom smoke (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/Ratboy_mohawk.tfx" \
+            https://raw.githubusercontent.com/thomthehound/TressFX/master/bin/Objects/HairAsset/Ratboy/Ratboy_mohawk.tfx
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/Ratboy_short.tfx" \
+            https://raw.githubusercontent.com/thomthehound/TressFX/master/bin/Objects/HairAsset/Ratboy/Ratboy_short.tfx
+          mohawk="$(./build/loxfx_tfx_inspect "$RUNNER_TEMP/Ratboy_mohawk.tfx" 3)"
+          short="$(./build/loxfx_tfx_inspect "$RUNNER_TEMP/Ratboy_short.tfx" 1)"
+          printf '%s\n%s\n' "$mohawk" "$short"
+          grep -qF 'Guide strands: 2228' <<< "$mohawk"
+          grep -qF 'Vertices per strand: 32' <<< "$mohawk"
+          grep -qF 'Planned thread lanes: 293440' <<< "$mohawk"
+          grep -qF 'Reference-launched thread lanes: 1173760' <<< "$mohawk"
+          grep -qF 'Guide strands: 37747' <<< "$short"
+          grep -qF 'Vertices per strand: 8' <<< "$short"
+          grep -qF 'Planned thread lanes: 1321600' <<< "$short"
+          grep -qF 'Reference-launched thread lanes: 2643200' <<< "$short"
       - name: Install
         run: cmake --install build --config Release --prefix "${{ github.workspace }}/build/package"
       - name: Configure downstream consumer

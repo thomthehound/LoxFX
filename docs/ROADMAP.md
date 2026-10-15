@@ -71,8 +71,9 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
   and Windows/Linux CPU CI.
 - [x] Import TressFX 4.x guide vertices and optional attributes with
   bounds checking and no implicit GPU-specific padding.
-- [ ] Test actual AMD reference assets; measure importer costs and examine
-  .tfxbone/.tfxmesh, legacy exporter assumptions and asset licenses.
+- [x] Exercise two real AMD .tfx groom assets in CI, with documented counts.
+- [ ] Measure importer costs and examine .tfxbone/.tfxmesh, other
+  legacy exporter assumptions and asset licenses.
 - [ ] Build and profile the unmodified reference demo on intended hardware;
   record scene, quality, frame time, memory and per-pass GPU timings.
   Do not assert legacy performance without running it.
@@ -80,6 +81,11 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 **Gate:** real TressFX asset round-trip checks and reproducible legacy baseline.
 
 ### M1 — First complete strand simulation
+
+- [x] Trace source stage order, master strand indexing, dispatch counts, and
+  unused follower work; implement checked source-aligned guide-work planning.
+- [ ] Build a native GPU executor for the whole source stage chain; the
+  work-plan alone does not simulate hair or validate a shader port.
 
 - Port an identifiable complete TressFX guide-strand simulation pipeline,
   preserving integration, global/local shape constraints, velocity shock

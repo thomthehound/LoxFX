@@ -2,16 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "loxfx/groom.h"
+#include "loxfx/simulation_work.h"
 
+#include <charconv>
+#include <cstdint>
 #include <fstream>
+#include <string_view>
 #include <iostream>
 #include <iterator>
 #include <vector>
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::cerr << "Usage: loxfx_tfx_inspect <asset.tfx>\n";
+    if (argc != 2 && argc != 3) {
+        std::cerr << "Usage: loxfx_tfx_inspect <asset.tfx> [followers-per-guide]\n";
         return 2;
+    }
+    std::uint32_t followers = 0;
+    if (argc == 3) {
+        const std::string_view input{argv[2]};
+        const auto [end, ec] = std::from_chars(input.data(), input.data() + input.size(), followers);
+        if (ec != std::errc{} || end != input.data() + input.size()) {
+            std::cerr << "Follower count must be a nonnegative integer\n";
+            return 2;
+        }
     }
     std::ifstream input(argv[1], std::ios::binary);
     if (!input) {
@@ -38,5 +51,15 @@ int main(int argc, char** argv) {
               << "Vertex UVs: " << groom.vertex_uvs.size() << "\n"
               << "Strand thickness values: " << groom.strand_thickness.size() << "\n"
               << "Vertex colors: " << groom.vertex_colors.size() << "\n";
+    const auto work = loxfx::make_simulation_work_plan(
+        {groom.guide_strands, groom.vertices_per_strand, followers, 2});
+    if (!work) {
+        std::cerr << "Cannot prepare simulation work: " << work.error() << "\n";
+        return 1;
+    }
+    std::cout << "Prepared guides: " << work->packed_guide_strands << "\n"
+              << "Prepared total strands: " << work->packed_total_strands << "\n"
+              << "Planned thread lanes: " << work->planned_lane_invocations << "\n"
+              << "Reference-launched thread lanes: " << work->reference_lane_invocations << "\n";
     return 0;
 }

@@ -16,8 +16,8 @@ source-grounded comparison, benchmarking and selective adoption.
 
 The initial CPU-only core imports TressFX 4.x `.tfx` guide-strand geometry and
 optional attributes without changing authored counts or adding generated
-follow strands. A standalone inspection tool and synthetic importer regression
-tests are included. **Hair simulation, GPU execution, rendering and engine
+follow strands. A standalone inspection tool, source-traced simulation dispatch planning and
+regression tests are included. **Hair simulation, GPU execution, rendering and engine
 integration are not implemented in this initial milestone.**
 
 ## Build
@@ -32,6 +32,9 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 Inspect a TressFX 4.x groom with `loxfx_tfx_inspect path/to/hair.tfx`.
+To inspect the projected GPU work footprint, pass an optional follower count:
+`loxfx_tfx_inspect path/to/hair.tfx 3`. The printed thread counts are analytic,
+not measured GPU execution times.
 
 Install and consume LoxFX as a standalone CMake package:
 
@@ -57,7 +60,8 @@ C++23 requirement. The public ABI is not yet frozen.
 See the [engineering roadmap](docs/ROADMAP.md),
 [modernization research](docs/MODERNIZATION_RESEARCH.md),
 [bootstrap audit](docs/BOOTSTRAP_AUDIT.md), and
-[reference audit](docs/TRESSFX_REFERENCE.md).
+[reference audit](docs/TRESSFX_REFERENCE.md), and
+[simulation source/performance trace](docs/SIMULATION_EXECUTION_TRACE.md).
 
 ## Licensing
 
