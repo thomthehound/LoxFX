@@ -54,9 +54,18 @@ equivalence on real assets. Keep any required follower render output.
 **Issue:** [#4](https://github.com/thomthehound/LoxFX/issues/4).
 **Prerequisite:** first GPU storage/binding implementation.
 **Status:** implemented-awaiting-measurement for guide-only GPU rest-length
-storage; other static follower-buffer consumers remain blocked pending
-full-simulation and rendering work. **Source:** [PR #3](https://github.com/thomthehound/LoxFX/pull/3)
-and [length/wind stage](LENGTH_WIND_STAGE.md).
+storage and compact stage-six follower publication metadata. Stage six no
+longer reads follower rest vertices: immutable guide segment lengths and
+16-byte-per-strand root offsets/tip coefficients share one GPU static
+allocation and binding. The full follower rest-position buffer is still
+uploaded at groom initialization, so the P0 reduction remains **blocked**
+until all other consumers (including initialization and rendering) are
+audited and matched on real hardware. The extra compact metadata footprint
+is `16 * packed_total_strands` bytes analytically; no measured memory or
+runtime saving is claimed.
+**Source:** [PR #3](https://github.com/thomthehound/LoxFX/pull/3),
+[length/wind stage](LENGTH_WIND_STAGE.md), and
+[follower publication](FOLLOWER_PUBLICATION_STAGE.md).
 
 **Evidence / source:** `src/prepared_groom.cpp`; six master-index shaders and follower expansion in the TressFX 4.1 reference; [PR #3](https://github.com/thomthehound/LoxFX/pull/3).
 **Acceptance:** same authored/style/pinning behavior, collision and renderer compatibility, with measured lower static GPU residency or transfer cost and no unacceptable frame-time increase. Compare representative 0/1/3-follower assets.
