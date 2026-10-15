@@ -17,7 +17,7 @@ add_library(LoxFX::Core ALIAS loxfx_core)
 target_compile_features(loxfx_core PUBLIC cxx_std_23)
 target_include_directories(loxfx_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 set_target_properties(loxfx_core PROPERTIES
   POSITION_INDEPENDENT_CODE ON
   EXPORT_NAME Core)

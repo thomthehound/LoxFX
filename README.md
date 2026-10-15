@@ -55,7 +55,8 @@ C++23 requirement. The public ABI is not yet frozen.
   introduced through explicit, independently maintained interfaces.
 
 See the [engineering roadmap](docs/ROADMAP.md),
-[modernization research](docs/MODERNIZATION_RESEARCH.md), and
+[modernization research](docs/MODERNIZATION_RESEARCH.md),
+[bootstrap audit](docs/BOOTSTRAP_AUDIT.md), and
 [reference audit](docs/TRESSFX_REFERENCE.md).
 
 ## Licensing
