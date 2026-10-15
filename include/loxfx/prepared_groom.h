@@ -47,6 +47,9 @@ struct PreparedGroom {
     std::vector<Float4> rest_positions;
     std::vector<Float4> rest_tangents;
     std::vector<float> rest_segment_lengths;
+    // XYZ: per-strand root offset; W: follower tip-separation coefficient.
+    // Zero for guide strands. Sufficient to generate followers from guides
+    // without accessing follower rest vertices on the simulation GPU.
     std::vector<Float4> follower_root_offsets;
 
     // Source provenance / visibility information, NOT a per-step GPU buffer.
