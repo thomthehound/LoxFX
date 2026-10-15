@@ -65,6 +65,17 @@ void iteration_and_error_bounds() {
            "64-vertex strands use one host dispatch");
     expect(long_strands->shader_local_shape_iterations == 20,
            "64-vertex shader is assigned the requested internal iterations");
+    for (std::uint32_t vertices : {4u,64u}) {
+        expect(loxfx::make_simulation_work_plan({
+            1, vertices, 0, loxfx::max_local_shape_iterations}).has_value(),
+            "highest supported local iteration count");
+        expect(!loxfx::make_simulation_work_plan({
+            1, vertices, 0, loxfx::max_local_shape_iterations+1}),
+            "reject unbounded local iteration work");
+        expect(!loxfx::make_simulation_work_plan({
+            1, vertices, 0, std::numeric_limits<std::uint32_t>::max()}),
+            "reject pathological local iteration counts");
+    }
     expect(!loxfx::make_simulation_work_plan({0, 4, 0, 1}), "zero guides");
     expect(!loxfx::make_simulation_work_plan({64, 3, 0, 1}), "invalid vertex topology");
     expect(!loxfx::make_simulation_work_plan({64, 128, 0, 1}), "non-reference vertex topology");
