@@ -80,7 +80,7 @@ template<typename Fn>void reject(Fn&& fn, const char* what) {
 }
 
 int main(int argc,char** argv) {
-    if (argc != 2) return 2;
+    if (argc != 3) return 2;
     try {
         namespace gpu = loxfx::vulkan::smoke;
         const auto a=loxfx::prepare_groom(fixture(0.0f,1),

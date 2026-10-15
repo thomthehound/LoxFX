@@ -75,7 +75,7 @@ void submit_host_commands(gpu::DeviceContext& context,
 }
 
 int main(int argc,char** argv) {
-    if(argc!=2)return 2;
+    if(argc!=3)return 2;
     try {
         auto first=loxfx::prepare_groom(fixture(0,1),{.followers_per_guide=1});
         auto second=loxfx::prepare_groom(fixture(5,2),{.followers_per_guide=2});
