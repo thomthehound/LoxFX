@@ -74,6 +74,19 @@ Authored guide geometry remains distinct from padded or compressed device
 layouts. Preserve all supported imported attributes. Avoid exporting Godot,
 external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
+## Godot adapter (initial reusable integration)
+
+The optional `adapters/godot` GDExtension is being introduced as a
+first-class engine adapter, not a dependency of the SDK or a Godauldron-only
+experiment. Stage one imports TressFX bytes, prepares visible strands and
+allows diagnostic packed position publication into a Godot line mesh. It
+**does not yet run the native simulation** from a Godot scene and its CPU
+mesh upload is not a production performance result. Its next gates are a
+verified native Vulkan/D3D12 simulation handoff, render-queue ownership
+and synchronization, higher-fidelity strand shading and validated
+CPU versus GPU data transfer costs. See
+[Godot adapter integration](../adapters/godot/README.md).
+
 ## Milestones
 
 ### M0 — Ground truth and ingest (initial)
