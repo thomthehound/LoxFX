@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <stdexcept>
 
 namespace loxfx {
 namespace {

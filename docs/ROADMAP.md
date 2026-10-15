@@ -84,6 +84,8 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 - [x] Trace source stage order, master strand indexing, dispatch counts, and
   unused follower work; implement checked source-aligned guide-work planning.
+- [x] Prepare interleaved persistent guide/follower buffers, rest lengths,
+  tangents and provenance without modifying imported authoring data.
 - [ ] Build a native GPU executor for the whole source stage chain; the
   work-plan alone does not simulate hair or validate a shader port.
 
