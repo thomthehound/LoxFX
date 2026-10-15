@@ -1,0 +1,15 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+; SPDX-License-Identifier: Apache-2.0
+
+[configuration]
+entry_symbol = "loxfx_library_init"
+; Set to the Godot minimum version that matches the chosen godot-cpp
+; generated bindings; do not claim an older compatible engine.
+compatibility_minimum = "@LOXFX_GODOT_COMPATIBILITY_MINIMUM@"
+reloadable = false
+
+[libraries]
+linux.debug.x86_64 = "res://addons/loxfx/bin/libloxfx_godot.so"
+linux.release.x86_64 = "res://addons/loxfx/bin/libloxfx_godot.so"
+windows.debug.x86_64 = "res://addons/loxfx/bin/loxfx_godot.dll"
+windows.release.x86_64 = "res://addons/loxfx/bin/loxfx_godot.dll"
