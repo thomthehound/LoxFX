@@ -28,12 +28,16 @@ func _run() -> void:
     if not instance.load_tfx_bytes(source, 2, 0.03, 0.6, 42):
         _fail("TFX import/preparation failed: " + instance.get_last_error())
         return
-    if not instance.is_loaded() or instance.get_authored_guide_count() != 2228         or instance.get_vertices_per_strand() != 32         or instance.get_followers_per_guide() != 2:
+    if (not instance.is_loaded()
+            or instance.get_authored_guide_count() != 2228
+            or instance.get_vertices_per_strand() != 32
+            or instance.get_followers_per_guide() != 2):
         _fail("Imported real TFX groom has incorrect topology")
         return
 
     var points: PackedVector3Array = instance.get_initial_positions()
-    if points.size() != instance.get_packed_vertex_count()         or points.size() != 2240 * 32 * 3:
+    if (points.size() != instance.get_packed_vertex_count()
+            or points.size() != 2240 * 32 * 3):
         _fail("Prepared packed groom lost its guide/follower/padding layout")
         return
     if instance.mesh == null or instance.mesh.get_surface_count() != 1:
@@ -44,7 +48,8 @@ func _run() -> void:
     if not instance.publish_positions(points):
         _fail("Failed Godot dynamic mesh update: " + instance.get_last_error())
         return
-    if not instance.get_last_error().is_empty()         or instance.mesh.get_surface_count() != 1:
+    if (not instance.get_last_error().is_empty()
+            or instance.mesh.get_surface_count() != 1):
         _fail("Dynamic position update damaged the existing mesh")
         return
 
