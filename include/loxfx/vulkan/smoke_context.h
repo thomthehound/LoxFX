@@ -74,10 +74,7 @@ public:
     // Final pass publishes follower positions and per-vertex tangents.
     void record_followers(VkCommandBuffer command_buffer,
                           const GroomState& groom) const;
-    // Stage six: publish followers and final tangents to persistent GPU buffers.
-    void record_followers(VkCommandBuffer command_buffer,
-                          const GroomState& groom) const;
-        void record_length_wind(VkCommandBuffer command_buffer,
+    void record_length_wind(VkCommandBuffer command_buffer,
                             const GroomState& groom,
                             const LengthWindParameters& parameters) const;
     void record_local_shape(VkCommandBuffer command_buffer,
@@ -96,7 +93,6 @@ public:
     // the VkCommandBuffer passed to record_integration themselves.
     VkCommandBuffer begin_diagnostic_commands();
     void submit_diagnostic_and_wait();
-    [[nodiscard]] std::vector<Float4> diagnostic_read_tangents(const GroomState& groom);
     [[nodiscard]] std::vector<Float4> diagnostic_read_positions(const GroomState& groom);
     [[nodiscard]] std::vector<Float4> diagnostic_read_tangents(const GroomState& groom);
     [[nodiscard]] std::vector<Float4> diagnostic_read_root_history(const GroomState& groom);
