@@ -239,6 +239,16 @@ throughput. **Status:** blocked until multi-groom runtime and GPU profiling.
 
 ## Evidence and handoff log
 
+- **2026-10-15, PR #15:** Built a compact previous-previous GPU root
+  history holding two `Float4` values per padded guide, because TressFX
+  `CalculateStrandLevelData` reads only root vertices 0 and 1. This
+  avoids a second full-vertex/follower history buffer. Other simulation
+  history and authored follower data remain; OPT-001/002 are **not**
+  completed and the memory choice has not been profiled on hardware.
+  Added host-driven root translation without per-frame CPU groom uploads,
+  preserving both native backends.
+
+
 - **2026-10-15, PR #2:** Source-derived six-pass work plan and verified guide
   lane counts. Optimized launch savings await GPU measurement (OPT-009).
 - **2026-10-15, PR #3:** Deterministic prepared interleaved follower data,
