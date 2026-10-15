@@ -248,6 +248,10 @@ struct IntegrationRuntime::Impl {
             throw std::runtime_error(
                 "groom exceeds selected device maxStorageBufferRange; "
                 "partitioning oversized grooms is not yet implemented");
+        if (groups > limits.limits.maxComputeWorkGroupCount[0])
+            throw std::runtime_error(
+                "groom exceeds selected device maxComputeWorkGroupCount[0]; "
+                "multi-dispatch partitioning is not yet implemented");
         allocate(current, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
