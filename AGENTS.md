@@ -18,6 +18,12 @@ important decisions across sessions.
   Do not deepen one backend without tracking the other to parity; keep
   backend-specific binding, scheduling and resource code in separate modules.
   Native D3D12 runtime parity is required, not replaced by DXIL compilation.
+- **Device/context ownership is outside per-groom simulation.** A groom must
+  never create its own graphics device, select another adapter implicitly,
+  compile device-invariant pipelines, or submit/fence-wait on every stage.
+  Host-owned and explicit standalone device contexts share the same recorder.
+  GPU resources must be failure-safe RAII with owned/borrowed handles clear.
+  See [GPU runtime architecture](docs/GPU_RUNTIME_ARCHITECTURE.md).
 - Preserve source-grounded simulation behavior, data ownership, dispatch
   dependencies, synchronization and publication when porting TressFX.
   Deliberate departures require reasons and correctness comparisons.

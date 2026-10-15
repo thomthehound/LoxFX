@@ -3,6 +3,13 @@
 
 # Vulkan integration stage — first executable GPU milestone
 
+**Architectural status: EXPERIMENTAL HARNESS ONLY — NOT MERGE-READY AS AN
+SDK RUNTIME.** The current implementation bundles Vulkan instance/device,
+pipeline, per-groom buffers, queue submission and fence waits inside one
+integration object. See [architectural audit](GPU_RUNTIME_ARCHITECTURE.md)
+and [issue #13](https://github.com/thomthehound/LoxFX/issues/13)
+for the required host-controlled, multi-groom correction.
+
 Status: first-stage candidate. Issue [#6](https://github.com/thomthehound/LoxFX/issues/6)
 remains open for the full six-stage GPU strand solver.
 

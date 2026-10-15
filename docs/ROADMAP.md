@@ -86,13 +86,25 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ### M1 — First complete strand simulation
 
+**Architecture hold on PR #11:** its one-stage Vulkan execution is a useful
+experimental proof, but its per-groom Vulkan device, allocation/retry,
+pipeline, blocking submission and exposed runtime API are **not** the
+shipping architecture. Correct ownership/recording boundaries before more
+simulation stages or merging it as an SDK runtime. See
+[GPU runtime architecture](GPU_RUNTIME_ARCHITECTURE.md) and
+[issue #13](https://github.com/thomthehound/LoxFX/issues/13).
+
+
 - [x] Trace source stage order, master strand indexing, dispatch counts, and
   unused follower work; implement checked source-aligned guide-work planning.
 - [x] Prepare interleaved persistent guide/follower buffers, rest lengths,
   tangents and provenance without modifying imported authoring data.
-- [x] Add an opt-in native Vulkan/DXC integration-stage runner with
-  persistent GPU buffers, explicit synchronization, readback tests and GPU
-  timestamps (first stage only; not full simulation).
+- [x] Demonstrate an **experimental** native Vulkan/DXC integration-stage
+  smoke test with persistent buffers, synchronization, readback assertions
+  and timestamps (first stage only; not a production backend API).
+- [ ] Replace per-groom device ownership with explicit shared backend
+  context, resource RAII and host-controlled command recording; test two
+  grooms on one device and no forced frame fence waits.
 - [x] Compile identical first-stage HLSL to Vulkan SPIR-V and D3D12 SM6.6
   DXIL in Windows CI, with backend-neutral parameter semantics.
 - [ ] Execute the same stage natively through D3D12 resources, root binding,

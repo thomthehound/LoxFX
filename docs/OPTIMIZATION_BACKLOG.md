@@ -76,6 +76,13 @@ followers, VRAM and frame time.
 
 ## OPT-003 — Stage-major scheduling and unnecessary synchronization
 
+**Architecture prerequisite:** [issue #13](https://github.com/thomthehound/LoxFX/issues/13)
+requires replacing per-groom Vulkan device, pipeline, submission and fence
+ownership with a shared backend context and host-controlled pass recording.
+Profiling fewer barriers on the existing synchronous per-groom object would
+optimize the wrong ownership boundary.
+
+
 **Observation:** Six stages dispatch across all grooms with per-object
 bindings and barriers. Short strands can repeat local-shape dispatches; the
 source may omit a memory visibility barrier between those iterations.
@@ -199,6 +206,12 @@ memory and perceptual error. See
 **Acceptance:** documented visual-motion improvement at controlled simulated guide count with practical full-frame performance on consumer GPU hardware. Open dedicated issue after a visual baseline and style fixtures exist.
 
 ## OPT-011 — Dedicated Vulkan allocation overhead and staging lifetime
+
+**Architecture prerequisite:** [issue #13](https://github.com/thomthehound/LoxFX/issues/13)
+moves device-level allocation policy and upload staging outside a groom;
+this avoids per-groom device and pipeline duplication before any custom
+suballocator work. No measured savings yet.
+
 
 **Evidence / source:** `src/vulkan/integration.cpp` currently requests
 individual Vulkan memory allocations for current/previous/rest positions and

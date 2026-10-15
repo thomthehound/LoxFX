@@ -50,6 +50,14 @@ C++23 requirement. The public ABI is not yet frozen.
 
 ## Optional Vulkan integration milestone
 
+**Architecture review:** the stage-one Vulkan module is a working
+experimental compute harness, **not a shipping runtime API**. The current
+per-groom graphics-device/submission ownership is being redesigned
+before merging it as a production SDK interface. See
+[the GPU runtime architecture decision](docs/GPU_RUNTIME_ARCHITECTURE.md)
+and [issue #13](https://github.com/thomthehound/LoxFX/issues/13).
+
+
 A native Vulkan module can compile and execute the **first** TressFX-inspired
 simulation stage on persistent GPU buffers. It tests static-root Verlet
 integration with explicit command submission, GPU memory barriers, diagnostic

@@ -7,6 +7,11 @@
 D3D12 SM6.6 DXIL but no native D3D12 executor yet.** Source code, timing
 and dispatch semantics must ultimately agree across both APIs.
 
+Before building more Vulkan-only stages, apply the explicit
+[device/context/recording contract](GPU_RUNTIME_ARCHITECTURE.md).
+Native D3D12 integration must **not** duplicate the current test-harness
+choice of a private graphics device and blocking submission per groom.
+
 ## Hard requirements
 
 - **Both production backends are first class:** Direct3D 12 with Shader Model
