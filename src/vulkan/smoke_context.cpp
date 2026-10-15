@@ -166,6 +166,7 @@ struct DeviceContext::Impl {
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipeline strand_pipeline = VK_NULL_HANDLE;
     VkPipeline velocity_shock_pipeline = VK_NULL_HANDLE;
+    VkPipeline local_shape_pipeline = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkCommandBuffer diagnostic_commands = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
@@ -182,6 +183,7 @@ struct DeviceContext::Impl {
             if (fence) vkDestroyFence(device, fence, nullptr);
             if (queries) vkDestroyQueryPool(device, queries, nullptr);
             if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
+            if (local_shape_pipeline) vkDestroyPipeline(device, local_shape_pipeline, nullptr);
             if (velocity_shock_pipeline) vkDestroyPipeline(device, velocity_shock_pipeline, nullptr);
             if (strand_pipeline) vkDestroyPipeline(device, strand_pipeline, nullptr);
             if (pipeline) vkDestroyPipeline(device, pipeline, nullptr);
@@ -283,8 +285,8 @@ struct DeviceContext::Impl {
         if (!physical) throw std::runtime_error("no qualified Vulkan compute device");
     }
     void initialize_pipeline(const std::filesystem::path& spirv) {
-        std::array<VkDescriptorSetLayoutBinding,4> bindings{};
-        for (std::uint32_t i=0;i<4;++i) {
+        std::array<VkDescriptorSetLayoutBinding,5> bindings{};
+        for (std::uint32_t i=0;i<bindings.size();++i) {
             bindings[i].binding=i;
             bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             bindings[i].descriptorCount=1;
@@ -363,6 +365,22 @@ struct DeviceContext::Impl {
         vkDestroyShaderModule(device,vsp_module,nullptr);
         verify(vsp_result,"create velocity-shock pipeline");
         velocity_shock_pipeline=created_vsp;
+        const auto shape_shader=load_shader(spirv.parent_path()/"loxfx_local_shape.spv");
+        VkShaderModuleCreateInfo shape_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        shape_info.codeSize=shape_shader.size()*sizeof(std::uint32_t);
+        shape_info.pCode=shape_shader.data();
+        VkShaderModule shape_module=VK_NULL_HANDLE;
+        verify(vkCreateShaderModule(device,&shape_info,nullptr,&shape_module),
+               "create local-shape shader module");
+        sci.module=shape_module;
+        sci.pName="LocalShapeConstraints";
+        cpi.stage=sci;
+        VkPipeline created_shape=VK_NULL_HANDLE;
+        const VkResult shape_result=vkCreateComputePipelines(
+            device,VK_NULL_HANDLE,1,&cpi,nullptr,&created_shape);
+        vkDestroyShaderModule(device,shape_module,nullptr);
+        verify(shape_result,"create local-shape pipeline");
+        local_shape_pipeline=created_shape;
 
         VkCommandPoolCreateInfo poolci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolci.queueFamilyIndex=family;
@@ -439,6 +457,7 @@ struct GroomState::Impl {
     VkDescriptorSet set=VK_NULL_HANDLE, strand_set=VK_NULL_HANDLE;
     Buffer current, previous, rest, root_previous_previous, strand_data;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
+    std::uint32_t local_dispatch_iterations=0, local_shader_iterations=0;
     VkDeviceSize vertex_bytes=0, root_history_bytes=0, strand_bytes=0;
     const void* context_id=nullptr;
     ~Impl() {
@@ -502,6 +521,8 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     groom->followers=source.followers_per_guide;
     groom->guides=source.work.packed_guide_strands;
     groom->groups=source.work.stages[0].thread_groups;
+    groom->local_dispatch_iterations=source.work.stages[3].iterations;
+    groom->local_shader_iterations=source.work.shader_local_shape_iterations;
     constexpr auto transfer=VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     constexpr auto storage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     groom->current.create(impl_->physical,impl_->device,bytes,
@@ -520,7 +541,7 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         storage|transfer|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,8};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,10};
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool.maxSets=2;
     pool.poolSizeCount=1;
@@ -541,13 +562,14 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
            "create groom descriptor sets");
     groom->set=sets[0];
     groom->strand_set=sets[1];
-    std::array<VkDescriptorBufferInfo,4> info{{
+    std::array<VkDescriptorBufferInfo,5> info{{
        {groom->current.handle,0,bytes},
        {groom->previous.handle,0,bytes},
        {groom->rest.handle,0,bytes},
-       {groom->root_previous_previous.handle,0,root_bytes}}};
-    std::array<VkWriteDescriptorSet,4> writes{};
-    for(std::uint32_t i=0;i<4;++i){
+       {groom->root_previous_previous.handle,0,root_bytes},
+       {groom->rest.handle,0,bytes}}};
+    std::array<VkWriteDescriptorSet,5> writes{};
+    for(std::uint32_t i=0;i<writes.size();++i){
         writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet=groom->set;
         writes[i].dstBinding=i;
@@ -555,13 +577,14 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         writes[i].descriptorCount=1;
         writes[i].pBufferInfo=&info[i];
     }
-    std::array<VkDescriptorBufferInfo,4> motion_info{{
+    std::array<VkDescriptorBufferInfo,5> motion_info{{
        {groom->current.handle,0,bytes},
        {groom->previous.handle,0,bytes},
        {groom->root_previous_previous.handle,0,root_bytes},
-       {groom->strand_data.handle,0,strand_bytes}}};
-    std::array<VkWriteDescriptorSet,4> motion_writes{};
-    for(std::uint32_t i=0;i<4;++i){
+       {groom->strand_data.handle,0,strand_bytes},
+       {groom->rest.handle,0,bytes}}};
+    std::array<VkWriteDescriptorSet,5> motion_writes{};
+    for(std::uint32_t i=0;i<motion_writes.size();++i){
         motion_writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         motion_writes[i].dstSet=groom->strand_set;
         motion_writes[i].dstBinding=i;
@@ -689,6 +712,34 @@ void DeviceContext::record_velocity_shock(VkCommandBuffer cb,
     vkCmdDispatch(cb,g.groups,1,1);
 }
 
+void DeviceContext::record_local_shape(VkCommandBuffer cb,const GroomState& state,
+                                       float stiffness) const {
+    if(!impl_||!cb||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("local-shape pass belongs to another Vulkan context");
+    if(!std::isfinite(stiffness)||stiffness<0.0f||stiffness>1.0f)
+        throw std::invalid_argument("invalid local-shape stiffness");
+    const auto& g=*state.impl_;
+    if(g.local_dispatch_iterations==0 || stiffness==0.0f) return;
+    struct ShapeConstants {
+        std::uint32_t vertices,followers,guides,shader_iterations;
+        float local_stiffness;
+    };
+    const ShapeConstants c{g.vertices,g.followers,g.guides,
+                           g.local_shader_iterations,stiffness};
+    vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->local_shape_pipeline);
+    vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipeline_layout,
+                            0,1,&g.strand_set,0,nullptr);
+    vkCmdPushConstants(cb,impl_->pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
+                       0,sizeof(c),&c);
+    for(std::uint32_t i=0;i<g.local_dispatch_iterations;++i) {
+        // Prior VSP writes and each repeated pass must be visible to
+        // the next local-shape dispatch. Each guide owns its own vertices.
+        memory_barrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+        vkCmdDispatch(cb,g.strand_groups,1,1);
+    }
+}
 VkCommandBuffer DeviceContext::begin_diagnostic_commands(){
     if(!impl_)throw std::logic_error("context was moved");
     return impl_->begin_diagnostics();
