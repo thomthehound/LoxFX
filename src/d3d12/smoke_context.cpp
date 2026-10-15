@@ -474,6 +474,14 @@ std::uint64_t GroomState::allocated_buffer_bytes()const noexcept{
     return impl_?impl_->committed_bytes:0;
 }
 
+
+ID3D12Resource* GroomState::positions_buffer() const noexcept {
+    return impl_?impl_->current.Get():nullptr;
+}
+ID3D12Resource* GroomState::tangents_buffer() const noexcept {
+    return impl_?impl_->tangents.Get():nullptr;
+}
+
 DeviceContext::DeviceContext(const std::filesystem::path& dxil,AdapterChoice preference)
 :impl_(std::make_shared<Impl>()) {
     impl_->create_standalone(preference);
