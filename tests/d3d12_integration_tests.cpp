@@ -569,6 +569,73 @@ int main(int argc,char** argv) {
                  long_result[64].y==long_prepared->rest_positions[64].y,
                  "D3D12 long strand length simulation and follower isolation");
 
+        // Final output: animated guide positions plus exact source-prepared
+        // per-follower offsets, including nonzero tip separation.
+        auto follow_asset=fixture(0.0f,1);
+        follow_asset.positions[1].w=0.0f;
+        auto follow_prep=loxfx::prepare_groom(follow_asset,
+            {.followers_per_guide=2,.follower_root_radius=0.35f,
+             .follower_tip_separation=0.65f,.seed=17u});
+        require(follow_prep.has_value(),"prepare follower publication");
+        auto follow_gpu=context.prepare_diagnostic(*follow_prep);
+        auto* follow_cmd=context.begin_diagnostic_commands();
+        context.record_integration(follow_cmd,follow_gpu,
+            {.time_step=dt,.gravity=720.0f,.damping=0.0f},1);
+        context.record_strand_level(follow_cmd,follow_gpu,
+            {.velocity_shock_coefficient=0.0f,.acceleration_threshold=100.0f});
+        context.record_velocity_shock(follow_cmd,follow_gpu);
+        context.record_local_shape(follow_cmd,follow_gpu,0.6f);
+        context.record_length_wind(follow_cmd,follow_gpu,
+            {.time_step=dt,.length_iterations=4});
+        context.record_followers(follow_cmd,follow_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto published=context.diagnostic_read_positions(follow_gpu);
+        const auto published_tangents=context.diagnostic_read_tangents(follow_gpu);
+        require(published.size()==follow_prep->rest_positions.size() &&
+                  published_tangents.size()==published.size(),
+                  "D3D12 follower publication allocates full outputs");
+        require(std::abs(published[2].y-follow_prep->rest_positions[2].y)>0.01f,
+                  "D3D12 guide actually moves before publication");
+        for(std::uint32_t v=0;v<4u;++v) {
+            const auto& tangent=published_tangents[v];
+            const float norm=std::sqrt(tangent.x*tangent.x+
+                                       tangent.y*tangent.y+tangent.z*tangent.z);
+            require(std::isfinite(norm) && std::abs(norm-1.0f)<0.0003f,
+                      "D3D12 guide tangents normalized");
+            for(std::uint32_t f=1u;f<=2u;++f) {
+                const std::uint32_t index=f*4u+v;
+                const auto& q=published[index];
+                const auto& rest_f=follow_prep->rest_positions[index];
+                const auto& rest_g=follow_prep->rest_positions[v];
+                require(std::abs(q.x-(published[v].x+rest_f.x-rest_g.x))<0.0003f &&
+                          std::abs(q.y-(published[v].y+rest_f.y-rest_g.y))<0.0003f &&
+                          std::abs(q.z-(published[v].z+rest_f.z-rest_g.z))<0.0003f,
+                          "D3D12 followers preserve prepared offsets including tip ease");
+                require(std::abs(published_tangents[index].x-tangent.x)<0.0001f &&
+                          std::abs(published_tangents[index].y-tangent.y)<0.0001f &&
+                          std::abs(published_tangents[index].z-tangent.z)<0.0001f,
+                          "D3D12 follower tangents copy guide final direction");
+            }
+        }
+        auto* repeat_cmd=context.begin_diagnostic_commands();
+        context.record_followers(repeat_cmd,follow_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto repeated=context.diagnostic_read_positions(follow_gpu);
+        for(std::uint32_t v=0;v<12u;++v)
+            require(std::abs(repeated[v].x-published[v].x)<0.0001f &&
+                      std::abs(repeated[v].y-published[v].y)<0.0001f,
+                      "D3D12 repeated publication does not accumulate offsets");
+
+        auto no_follow_prep=loxfx::prepare_groom(follow_asset);
+        require(no_follow_prep.has_value(),"prepare guide-only publication");
+        auto no_follow_gpu=context.prepare_diagnostic(*no_follow_prep);
+        auto* no_follow_cmd=context.begin_diagnostic_commands();
+        context.record_followers(no_follow_cmd,no_follow_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto guide_only=context.diagnostic_read_tangents(no_follow_gpu);
+        require(std::abs(guide_only[2].y-1.0f)<0.0001f,
+                  "D3D12 guide-only output produces valid tangents");
+
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
                  <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms
