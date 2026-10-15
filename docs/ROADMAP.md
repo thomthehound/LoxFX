@@ -7,6 +7,8 @@ Status: initial working plan, October 2026. Gates are evidence-driven.
 
 See [modernization research and measured options](MODERNIZATION_RESEARCH.md)
 for technique comparisons, performance criteria, and references.
+Track all deferred performance opportunities in the canonical
+[optimization backlog](OPTIMIZATION_BACKLOG.md).
 
 ## Objective
 
