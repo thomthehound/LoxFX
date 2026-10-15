@@ -116,20 +116,6 @@ struct IntegrationRuntime::Impl {
         if (instance) vkDestroyInstance(instance, nullptr);
     }
 
-    // Device memory allocation capacity is distinct from shader descriptor
-    // range size and compute dispatch limits.
-    std::uint32_t memory_index(std::uint32_t bits, VkMemoryPropertyFlags requested,
-                               VkDeviceSize allocation_size) const {
-        VkPhysicalDeviceMemoryProperties properties{};
-        vkGetPhysicalDeviceMemoryProperties(physical, &properties);
-        for (std::uint32_t i = 0; i < properties.memoryTypeCount; ++i)
-            if ((bits & (1u << i)) &&
-                (properties.memoryTypes[i].propertyFlags & requested) == requested &&
-                properties.memoryHeaps[properties.memoryTypes[i].heapIndex].size >= allocation_size)
-                return i;
-        throw std::runtime_error("required Vulkan buffer memory type unavailable");
-    }
-
     void allocate(Buffer& result, VkDeviceSize size, VkBufferUsageFlags usage,
                   VkMemoryPropertyFlags memory_flags) {
         result.bytes = size;
@@ -140,15 +126,41 @@ struct IntegrationRuntime::Impl {
         vk_check(vkCreateBuffer(device, &create, nullptr, &result.buffer), "create buffer");
         VkMemoryRequirements requirements{};
         vkGetBufferMemoryRequirements(device, result.buffer, &requirements);
-        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         if (requirements.size > max_allocation_size)
             throw std::runtime_error("buffer exceeds maxMemoryAllocationSize");
+
+        // A matching memory type is not necessarily a successfully allocatable
+        // type. Try every compatible heap before rejecting this adapter.
+        VkPhysicalDeviceMemoryProperties properties{};
+        vkGetPhysicalDeviceMemoryProperties(physical, &properties);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         alloc.allocationSize = requirements.size;
-        alloc.memoryTypeIndex =
-            memory_index(requirements.memoryTypeBits, memory_flags, requirements.size);
-        vk_check(vkAllocateMemory(device, &alloc, nullptr, &result.memory), "allocate buffer");
-        result.allocation_bytes = alloc.allocationSize;
-        vk_check(vkBindBufferMemory(device, result.buffer, result.memory, 0), "bind buffer");
+        VkResult last_error = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        bool found_type = false;
+        for (std::uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
+            if (!(requirements.memoryTypeBits & (1u << i)) ||
+                (properties.memoryTypes[i].propertyFlags & memory_flags) != memory_flags ||
+                properties.memoryHeaps[properties.memoryTypes[i].heapIndex].size <
+                    requirements.size)
+                continue;
+            found_type = true;
+            alloc.memoryTypeIndex = i;
+            const VkResult attempt =
+                vkAllocateMemory(device, &alloc, nullptr, &result.memory);
+            if (attempt == VK_SUCCESS) {
+                result.allocation_bytes = alloc.allocationSize;
+                vk_check(vkBindBufferMemory(device, result.buffer, result.memory, 0),
+                         "bind buffer");
+                return;
+            }
+            // A memory shortage may be specific to the selected heap.
+            if (attempt != VK_ERROR_OUT_OF_DEVICE_MEMORY)
+                vk_check(attempt, "allocate buffer");
+            last_error = attempt;
+        }
+        if (!found_type)
+            throw std::runtime_error("no compatible Vulkan heap can hold buffer");
+        vk_check(last_error, "all eligible Vulkan memory heaps rejected allocation");
     }
 
     void submit_and_wait() {
