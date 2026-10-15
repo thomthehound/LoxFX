@@ -315,6 +315,25 @@ int main(int argc,char** argv) {
         const auto below=context.diagnostic_read_strand_data(attached_gpu);
         require(std::abs(below[0].vsp_translation_coefficient.w-0.35f)<0.0001f,
                 "D3D12 ordinary VSP coefficient below threshold");
+        // Same nonidentity quaternion fixture as Vulkan: gravity rotates a
+        // movable proximal segment from +X toward -Y.
+        auto tilting=fixture(0.0f,1);
+        tilting.positions[1].x=1.0f;
+        tilting.positions[1].y=0.0f;
+        auto tilted_prep=loxfx::prepare_groom(tilting,{.followers_per_guide=1});
+        require(tilted_prep.has_value(),"prepare tilted D3D12 guide");
+        auto tilted_gpu=context.prepare_diagnostic(*tilted_prep);
+        auto* tilt_commands=context.begin_diagnostic_commands();
+        context.record_integration(tilt_commands,tilted_gpu,
+            {.time_step=dt,.gravity=500.0f,.damping=0},1);
+        context.record_strand_level(tilt_commands,tilted_gpu,
+            {.velocity_shock_coefficient=0.42f,.acceleration_threshold=100.0f});
+        context.submit_diagnostic_and_wait();
+        const auto tilt_data=context.diagnostic_read_strand_data(tilted_gpu);
+        require(tilt_data[0].vsp_quaternion.z < -0.04f &&
+                tilt_data[0].vsp_quaternion.z > -0.10f &&
+                std::abs(tilt_data[0].vsp_translation_coefficient.w-0.42f)<0.0001f,
+                "D3D12 quaternion rotates +X toward -Y without coefficient override");
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
                  <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms

@@ -308,6 +308,25 @@ int main(int argc,char** argv) {
         const auto below=context.diagnostic_read_strand_data(attached_gpu);
         check(std::abs(below[0].vsp_translation_coefficient.w-0.35f)<0.0001f,
               "configured VSP coefficient below acceleration threshold");
+        // Nonidentity rotation: a movable first segment tilts under
+        // gravity. The source transform must rotate +X toward -Y.
+        auto tilting=fixture(0.0f,1);
+        tilting.positions[1].x=1.0f;
+        tilting.positions[1].y=0.0f;
+        auto tilted_prep=loxfx::prepare_groom(tilting,{.followers_per_guide=1});
+        check(tilted_prep.has_value(),"prepare tilted guide");
+        auto tilted_gpu=context.prepare(*tilted_prep);
+        auto tilt_commands=context.begin_diagnostic_commands();
+        context.record_integration(tilt_commands,tilted_gpu,
+            {.time_step=dt,.gravity=500.0f,.damping=0},1);
+        context.record_strand_level(tilt_commands,tilted_gpu,
+            {.velocity_shock_coefficient=0.42f,.acceleration_threshold=100.0f});
+        context.submit_diagnostic_and_wait();
+        const auto tilt_data=context.diagnostic_read_strand_data(tilted_gpu);
+        check(tilt_data[0].vsp_quaternion.z < -0.04f &&
+              tilt_data[0].vsp_quaternion.z > -0.10f &&
+              std::abs(tilt_data[0].vsp_translation_coefficient.w-0.42f)<0.0001f,
+              "Vulkan quaternion rotates +X toward -Y without VSP override");
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared
