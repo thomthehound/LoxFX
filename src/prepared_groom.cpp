@@ -127,7 +127,10 @@ prepare_impl(const GroomAsset& asset, const GroomPreparation& options) {
                 const float v = signed_uniform(random_state);
                 offset = (t0 * u + t1 * v) * options.follower_root_radius;
             }
-            prepared.follower_root_offsets[packed_strand] = packed(offset, 0);
+            // XYZ stores the follower's root offset; W carries the authored
+            // tip separation so publication never needs follower rest vertices.
+            prepared.follower_root_offsets[packed_strand] =
+                packed(offset, strand_offset == 0 ? 0.0f : options.follower_tip_separation);
 
             for (std::size_t vertex = 0; vertex < n; ++vertex) {
                 const Float4 original = asset.positions[source_base + vertex];
