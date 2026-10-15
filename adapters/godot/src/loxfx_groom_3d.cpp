@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <string>
@@ -88,8 +89,10 @@ bool LoxFXGroom3D::load_tfx_bytes(const PackedByteArray& tfx,
         visible_strands * (prepared->vertices_per_strand - 1u) * 2u;
     if (points_count > static_cast<std::uint64_t>(
             std::numeric_limits<std::int32_t>::max()) ||
+        // The update API uses a PackedByteArray of 32-bit XYZ triplets:
+        // its byte count, not just the number of vectors, must fit.
         line_vertices > static_cast<std::uint64_t>(
-            std::numeric_limits<std::int32_t>::max())) {
+            std::numeric_limits<std::int32_t>::max() / (3 * sizeof(float)))) {
         fail("LoxFX: prepared groom exceeds Godot diagnostic geometry limits");
         return false;
     }
@@ -134,7 +137,7 @@ bool LoxFXGroom3D::update_lines(
         (g.followers_per_guide + 1u);
     const std::uint64_t line_vertices = visible_strands * (n - 1u) * 2u;
     if (line_vertices > static_cast<std::uint64_t>(
-                std::numeric_limits<std::int32_t>::max())) {
+                std::numeric_limits<std::int32_t>::max() / (3 * sizeof(float)))) {
         fail("LoxFX: groom exceeds diagnostic mesh index limit");
         return false;
     }
@@ -183,8 +186,30 @@ bool LoxFXGroom3D::update_lines(
     } else {
         // This CPU->Godot update path is for visual diagnostics, not a
         // production renderer or a trustworthy full-frame benchmark.
-        lines_->surface_update_vertex_region(0, 0,
-                vertices.to_byte_array());
+        PackedByteArray encoded = vertices.to_byte_array();
+        const auto expected_bytes =
+            static_cast<std::int64_t>(line_vertices * 3 * sizeof(float));
+        if (encoded.size() != expected_bytes) {
+            // Godot's GPU vertex buffer is float32 XYZ even in double-real
+            // engine builds. PackedVector3Array's raw bytes may instead
+            // reflect its 64-bit CPU Vector3 precision.
+            encoded.resize(expected_bytes);
+            if (encoded.size() != expected_bytes) {
+                fail("LoxFX: unable to allocate the diagnostic vertex update");
+                return false;
+            }
+            auto* destination = encoded.ptrw();
+            for (std::int64_t i = 0; i < vertices.size(); ++i) {
+                const Vector3 p = vertices[i];
+                const float xyz[3] = {
+                    static_cast<float>(p.x),
+                    static_cast<float>(p.y),
+                    static_cast<float>(p.z)
+                };
+                std::memcpy(destination + i * sizeof(xyz), xyz, sizeof(xyz));
+            }
+        }
+        lines_->surface_update_vertex_region(0, 0, encoded);
     }
     // Updating vertex buffer bytes does not implicitly update mesh bounds.
     set_custom_aabb(AABB(minimum, maximum - minimum).grow(0.01));
