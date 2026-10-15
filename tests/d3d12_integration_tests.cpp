@@ -580,7 +580,8 @@ int main(int argc,char** argv) {
         auto follow_gpu=context.prepare_diagnostic(*follow_prep);
         auto* follow_cmd=context.begin_diagnostic_commands();
         context.record_integration(follow_cmd,follow_gpu,
-            {.time_step=dt,.gravity=720.0f,.damping=0.0f},1);
+            {.time_step=dt,.gravity=720.0f,.damping=0.0f,
+             .root_translation_x=1.0f},1);
         context.record_strand_level(follow_cmd,follow_gpu,
             {.velocity_shock_coefficient=0.0f,.acceleration_threshold=100.0f});
         context.record_velocity_shock(follow_cmd,follow_gpu);
@@ -594,7 +595,7 @@ int main(int argc,char** argv) {
         require(published.size()==follow_prep->rest_positions.size() &&
                   published_tangents.size()==published.size(),
                   "D3D12 follower publication allocates full outputs");
-        require(std::abs(published[2].y-follow_prep->rest_positions[2].y)>0.01f,
+        require(std::abs(published[2].x-follow_prep->rest_positions[2].x)>0.01f,
                   "D3D12 guide actually moves before publication");
         for(std::uint32_t v=0;v<4u;++v) {
             const auto& tangent=published_tangents[v];
