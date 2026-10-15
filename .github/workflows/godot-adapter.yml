@@ -88,6 +88,9 @@ jobs:
         run: |
           set -euo pipefail
           project=adapters/godot/tests
+          # Force a known CPU Vulkan ICD in CI: this validates GPU command
+          # execution semantics, not physical GPU performance.
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
           mkdir -p "$project/addons/loxfx/bin" "$project/grooms" "$project/shaders" build/godot-engine
           cp build/godot/shaders/loxfx_*.spv "$project/shaders/"
           cp build/godot/loxfx.gdextension "$project/addons/loxfx/loxfx.gdextension"
