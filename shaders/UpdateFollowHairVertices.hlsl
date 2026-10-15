@@ -39,7 +39,9 @@ struct Parameters {
 #endif
 
 LOXFX_BINDING(0) RWStructuredBuffer<float4> positions : register(u0,space0);
-LOXFX_BINDING(4) StructuredBuffer<float4> rest_positions : register(t4,space0);
+// Stage-five's immutable packed static buffer also carries one Float4
+// offset+tip coefficient per strand, after guide rest lengths.
+LOXFX_BINDING(5) ByteAddressBuffer guide_static_data : register(t5,space0);
 LOXFX_BINDING(6) RWStructuredBuffer<float4> dynamic_tangents : register(u6,space0);
 
 [numthreads(64,1,1)]
@@ -57,21 +59,27 @@ void UpdateFollowHairVertices(uint local_id : SV_GroupIndex,
     const uint tangent_index=vertex+1u<params.vertices_per_strand?index:index-1u;
     float3 delta=positions[tangent_index+1u].xyz-positions[tangent_index].xyz;
     float squared=dot(delta,delta);
+    // Degenerate simulated segments fall back to a neutral tangent.
+    // Avoid adding follower rest geometry dependencies here.
     if(squared<=1e-16f) {
-        delta=rest_positions[tangent_index+1u].xyz-rest_positions[tangent_index].xyz;
-        squared=dot(delta,delta);
+        delta=float3(0,1,0);
+        squared=1.0f;
     }
     const float4 tangent=float4(squared>1e-16f?
         delta*rsqrt(squared):float3(0,1,0),0);
     dynamic_tangents[index]=tangent;
-    // Source-generated root offset and tip separation are already encoded
-    // in prepared follower rest positions. No extra offset buffer is needed.
+    // The static segment stores one compact Float4 per strand rather than
+    // N rest vertices for each follower (OPT-001).
+    const uint offset_base=params.padded_guides*params.vertices_per_strand*4u;
+    const float vertex_fraction=float(vertex)/float(params.vertices_per_strand);
     for(uint follow=1u;follow<=params.followers_per_guide;++follow) {
         const uint follower_strand=strand+follow;
         const uint follower_index=follower_strand*params.vertices_per_strand+vertex;
         float4 destination=positions[follower_index];
-        destination.xyz=guide_position.xyz+
-                        (rest_positions[follower_index].xyz-rest_positions[index].xyz);
+        const float4 offset=asfloat(guide_static_data.Load4(
+            offset_base+follower_strand*16u));
+        const float factor=1.0f+offset.w*vertex_fraction;
+        destination.xyz=guide_position.xyz+factor*offset.xyz;
         positions[follower_index]=destination;
         dynamic_tangents[follower_index]=tangent;
     }
