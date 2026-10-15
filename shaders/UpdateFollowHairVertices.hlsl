@@ -29,7 +29,6 @@ struct Parameters {
     uint followers_per_guide;
     uint padded_guides;
     uint reserved;
-    float tip_separation;
 };
 #ifdef LOXFX_SPIRV
     [[vk::push_constant]] ConstantBuffer<Parameters> params;
@@ -40,8 +39,8 @@ struct Parameters {
 #endif
 
 LOXFX_BINDING(0) RWStructuredBuffer<float4> positions : register(u0,space0);
-LOXFX_BINDING(6) StructuredBuffer<float4> follower_offsets : register(t6,space0);
-LOXFX_BINDING(7) RWStructuredBuffer<float4> dynamic_tangents : register(u7,space0);
+LOXFX_BINDING(4) StructuredBuffer<float4> rest_positions : register(t4,space0);
+LOXFX_BINDING(6) RWStructuredBuffer<float4> dynamic_tangents : register(u6,space0);
 
 [numthreads(64,1,1)]
 void UpdateFollowHairVertices(uint local_id : SV_GroupIndex,
@@ -61,14 +60,14 @@ void UpdateFollowHairVertices(uint local_id : SV_GroupIndex,
     const float4 tangent=float4(squared>1e-16f?
         delta*rsqrt(squared):float3(0,1,0),0);
     dynamic_tangents[index]=tangent;
-    const float factor=1.0f+params.tip_separation*
-        (float(vertex)/float(params.vertices_per_strand));
+    // Source-generated root offset and tip separation are already encoded
+    // in prepared follower rest positions. No extra offset buffer is needed.
     for(uint follow=1u;follow<=params.followers_per_guide;++follow) {
         const uint follower_strand=strand+follow;
         const uint follower_index=follower_strand*params.vertices_per_strand+vertex;
         float4 destination=positions[follower_index];
         destination.xyz=guide_position.xyz+
-                        factor*follower_offsets[follower_strand].xyz;
+                        (rest_positions[follower_index].xyz-rest_positions[index].xyz);
         positions[follower_index]=destination;
         dynamic_tangents[follower_index]=tangent;
     }
