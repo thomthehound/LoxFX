@@ -39,8 +39,9 @@ struct Parameters {
 #endif
 
 LOXFX_BINDING(0) RWStructuredBuffer<float4> positions : register(u0,space0);
-// Stage-five's immutable packed static buffer also carries one Float4
-// offset+tip coefficient per strand, after guide rest lengths.
+// Guide rest geometry remains useful as a fallback for degenerate tangents.
+LOXFX_BINDING(4) StructuredBuffer<float4> rest_positions : register(t4,space0);
+// The compact static buffer carries guide lengths and per-strand offsets.
 LOXFX_BINDING(5) ByteAddressBuffer guide_static_data : register(t5,space0);
 LOXFX_BINDING(6) RWStructuredBuffer<float4> dynamic_tangents : register(u6,space0);
 
@@ -59,11 +60,10 @@ void UpdateFollowHairVertices(uint local_id : SV_GroupIndex,
     const uint tangent_index=vertex+1u<params.vertices_per_strand?index:index-1u;
     float3 delta=positions[tangent_index+1u].xyz-positions[tangent_index].xyz;
     float squared=dot(delta,delta);
-    // Degenerate simulated segments fall back to a neutral tangent.
-    // Avoid adding follower rest geometry dependencies here.
+    // Only guide rest vertices are consulted in the degenerate case.
     if(squared<=1e-16f) {
-        delta=float3(0,1,0);
-        squared=1.0f;
+        delta=rest_positions[tangent_index+1u].xyz-rest_positions[tangent_index].xyz;
+        squared=dot(delta,delta);
     }
     const float4 tangent=float4(squared>1e-16f?
         delta*rsqrt(squared):float3(0,1,0),0);
