@@ -21,8 +21,8 @@ provides an independent comparison baseline.
 | --- | --- |
 | Portable core | C++23 asset model, validated TressFX 4.x `.tfx` import, optional attributes, and an installable CMake package |
 | Groom preparation | Persistent strand data, rest geometry, tangents, segment lengths, deterministic followers, and source-aligned GPU work plans |
-| Vulkan | Native compute execution of integration/global-shape and strand-level motion stages, with persistent GPU resources and caller-recorded commands |
-| Direct3D 12 | The same two HLSL stages executed as SM6.6 DXIL through native D3D12, with independent resource binding and command recording |
+| Vulkan | Native compute execution of integration/global-shape, strand-level motion, and velocity-shock propagation, with persistent GPU resources and caller-recorded commands |
+| Direct3D 12 | The same three HLSL stages executed as SM6.6 DXIL through native D3D12, with independent resource binding and command recording |
 | Verification | Windows/Linux core tests, Linux software-Vulkan tests, Windows D3D12 WARP tests, and shared numerical fixtures |
 
 The installed SDK currently exports **`LoxFX::Core`**. GPU implementations
@@ -37,17 +37,15 @@ LoxFX follows the six-stage TressFX guide-strand execution model:
    attachments, pinned roots, and rest-shape relaxation. *Executing.*
 2. **Strand-level motion** — per-guide rotation, translation, and
    velocity-shock parameters using compact root-position history. *Executing.*
-3. **Velocity-shock propagation** — apply strand-level motion to guides.
+3. **Velocity-shock propagation** — apply strand-level motion to guides. *Executing.*
 4. **Local shape constraints** — preserve strand curvature and local structure.
 5. **Length, wind, and collision** — constrain and interact with the scene.
 6. **Follower update** — expand simulated guides into renderable hair.
 
-The next qualification checkpoint is physical-GPU execution of the
-existing two-stage pipeline, including feature support, frame timing,
-and memory accounting. Implementation then advances through
-velocity-shock propagation, skeletal attachments, strand constraints,
-wind and collision, and follower publication. Complete visual and
-performance comparisons use matched reference scenes.
+Development continues through skeletal attachments, local-shape constraints,
+length and wind behavior, collision, and follower publication. Once the
+pipeline produces visible, animated hair, physical-GPU profiling and matched
+reference-scene comparisons will guide performance and rendering improvements.
 
 ## Build the core
 
@@ -125,7 +123,7 @@ GPU execution, and optional rendering or engine adapters. **Vulkan 1.4**
 and **D3D12 Shader Model 6.6** are the intended production targets;
 Godot is an early integration consumer, not a dependency.
 
-The engineering priorities are to complete the six-stage strand simulator,
+The engineering priorities are to complete the remaining three stages,
 validate animated attachments and collision, publish renderable follower
 data, and measure visual quality and full-frame cost before selecting
 further solver, LOD, or rendering optimizations.
