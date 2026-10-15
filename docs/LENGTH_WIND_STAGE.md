@@ -24,11 +24,14 @@ inter-stage synchronization at host boundaries.
 The CPU asset retains its authored reference-compatible layout.
 GPU preparation extracts only `padded_guides × vertices_per_strand` scalar
 rest lengths from the already prepared geometry and uploads them once.
-The resulting guide-only immutable buffer is shared by the simulation
-pipeline, with no per-frame length recalculation, data copy or CPU readback.
+The immutable GPU allocation packs guide-only rest lengths followed by
+one Float4 root offset/tip coefficient per packed strand. Stage five reads
+4-byte guide lengths; stage six reads compact 16-byte strand records.
+Neither needs per-frame rest-length recalculation, data copy or CPU readback.
 
-Vulkan exposes the buffer at binding 5 in the existing device-owned
-descriptor layout. D3D12 exposes the equivalent root SRV at `t5`.
+Vulkan exposes the packed byte-addressed storage buffer at binding 5 in
+the existing device-owned descriptor layout. D3D12 exposes the equivalent
+root SRV at `t5`.
 Both backends use the same 96-byte parameter layout and canonical HLSL
 shader. Device admission enforces the required descriptor and push-constant
 capacity.
