@@ -63,7 +63,8 @@ func _run() -> void:
         if not instance.start_native_diagnostic(expected_shader):
             _fail("LoxFX native Vulkan startup failed: " + instance.get_last_error())
             return
-        if not instance.is_native_diagnostic_active()                 or not instance.get_native_diagnostic_backend().contains("Vulkan"):
+        if (not instance.is_native_diagnostic_active()
+                or not instance.get_native_diagnostic_backend().contains("Vulkan")):
             _fail("Native Vulkan diagnostic provider did not initialize")
             return
         if not instance.step_native_diagnostic(
@@ -71,10 +72,13 @@ func _run() -> void:
             _fail("Native LoxFX six-stage step failed: " + instance.get_last_error())
             return
         var root_result: Vector3 = instance.get_native_diagnostic_root_position()
-        if instance.get_native_diagnostic_steps() != 1                 or absf(root_result.x - rest_root.x - 0.25) > 0.01:
+        if (instance.get_native_diagnostic_steps() != 1
+                or absf(root_result.x - rest_root.x - 0.25) > 0.01):
             _fail("Native compute did not publish translated guide root")
             return
-        if not instance.reset_native_diagnostic()                 or instance.get_native_diagnostic_steps() != 0                 or instance.get_native_diagnostic_root_position().distance_to(rest_root) > 0.0001:
+        if (not instance.reset_native_diagnostic()
+                or instance.get_native_diagnostic_steps() != 0
+                or instance.get_native_diagnostic_root_position().distance_to(rest_root) > 0.0001):
             _fail("Native simulation state did not reset to source rest geometry")
             return
         instance.stop_native_diagnostic()
