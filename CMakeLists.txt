@@ -313,3 +313,13 @@ if(LOXFX_BUILD_D3D12_SMOKE)
       COMMAND loxfx_d3d12_integration_tests "${LOXFX_INTEGRATION_DXIL}" "${LOXFX_STRAND_DXIL}")
   endif()
 endif()
+
+# Adapter must be added after the internal backend targets when its explicitly
+# enabled native diagnostic variant links to the actual LoxFX executors.
+# No backend library or internal header is exported to ordinary SDK consumers.
+if(LOXFX_BUILD_GODOT_ADAPTER)
+  add_subdirectory(adapters/godot)
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/adapters/godot/loxfx.gdextension.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/loxfx.gdextension" @ONLY)
+endif()
