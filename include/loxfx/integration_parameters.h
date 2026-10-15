@@ -14,6 +14,11 @@ struct IntegrationParameters {
     float damping = 0.08f;
     float global_stiffness = 0.0f;
     float global_range = 0.0f;
+    // First host-driven attachment primitive: world-space translation of
+    // rest/root positions. Full per-guide skeletal transforms follow.
+    float root_translation_x = 0.0f;
+    float root_translation_y = 0.0f;
+    float root_translation_z = 0.0f;
 };
 
 } // namespace loxfx
