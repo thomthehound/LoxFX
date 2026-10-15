@@ -3,12 +3,14 @@
 
 # D3D12 / Vulkan backend parity contract
 
-**Status: both Vulkan SPIR-V and native D3D12 SM6.6 DXIL now execute the
-same first-stage HLSL** in separate GPU API runtimes. Linux software Vulkan
+**Status: Vulkan SPIR-V and native D3D12 SM6.6 DXIL execute the same
+first three simulation stages** in separate GPU API runtimes. Linux software Vulkan
 and Windows D3D12 WARP are functional tests, not physical GPU performance
 measurements. Both runtimes remain internal, not installed SDK APIs.
 Source code, timing and dispatch semantics must ultimately agree across
-both APIs. Native full-six-stage execution is still incomplete.
+both APIs. Native full-six-stage execution is still incomplete. Stage three
+applies strand-level velocity-shock transforms to guide vertices
+without new dynamic buffers; see [stage-three contract](VELOCITY_SHOCK_STAGE.md).
 
 Before building more Vulkan-only stages, apply the explicit
 [device/context/recording contract](GPU_RUNTIME_ARCHITECTURE.md).
