@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
 // SPDX-License-Identifier: MIT
 //
+
 // Adapted from TressFX 4.1 src/Shaders/TressFXSimulation.hlsl,
 // VelocityShockPropagation. See NOTICE.md for AMD attribution.
 
