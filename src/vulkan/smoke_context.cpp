@@ -168,6 +168,7 @@ struct DeviceContext::Impl {
     VkPipeline velocity_shock_pipeline = VK_NULL_HANDLE;
     VkPipeline local_shape_pipeline = VK_NULL_HANDLE;
     VkPipeline length_wind_pipeline = VK_NULL_HANDLE;
+    VkPipeline follower_pipeline = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkCommandBuffer diagnostic_commands = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
@@ -184,6 +185,7 @@ struct DeviceContext::Impl {
             if (fence) vkDestroyFence(device, fence, nullptr);
             if (queries) vkDestroyQueryPool(device, queries, nullptr);
             if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
+            if (follower_pipeline) vkDestroyPipeline(device, follower_pipeline, nullptr);
             if (length_wind_pipeline) vkDestroyPipeline(device, length_wind_pipeline, nullptr);
             if (local_shape_pipeline) vkDestroyPipeline(device, local_shape_pipeline, nullptr);
             if (velocity_shock_pipeline) vkDestroyPipeline(device, velocity_shock_pipeline, nullptr);
@@ -212,8 +214,8 @@ struct DeviceContext::Impl {
             props.limits.maxComputeWorkGroupSize[0] < 64 ||
             props.limits.maxComputeWorkGroupInvocations < 64 ||
             props.limits.maxPushConstantsSize < 96 ||
-            props.limits.maxDescriptorSetStorageBuffers < 6 ||
-            props.limits.maxPerStageDescriptorStorageBuffers < 6)
+            props.limits.maxDescriptorSetStorageBuffers < 7 ||
+            props.limits.maxPerStageDescriptorStorageBuffers < 7)
             throw std::invalid_argument("selected Vulkan device cannot run integration shader");
         physical = ext.physical;
         device = ext.logical;
@@ -249,8 +251,8 @@ struct DeviceContext::Impl {
                     props.limits.maxComputeWorkGroupSize[0] < 64 ||
                     props.limits.maxComputeWorkGroupInvocations < 64 ||
                     props.limits.maxPushConstantsSize < 96 ||
-                    props.limits.maxDescriptorSetStorageBuffers < 6 ||
-                    props.limits.maxPerStageDescriptorStorageBuffers < 6)
+                    props.limits.maxDescriptorSetStorageBuffers < 7 ||
+                    props.limits.maxPerStageDescriptorStorageBuffers < 7)
                     continue;
                 std::uint32_t count_q = 0;
                 vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count_q, nullptr);
@@ -287,7 +289,7 @@ struct DeviceContext::Impl {
         if (!physical) throw std::runtime_error("no qualified Vulkan compute device");
     }
     void initialize_pipeline(const std::filesystem::path& spirv) {
-        std::array<VkDescriptorSetLayoutBinding,6> bindings{};
+        std::array<VkDescriptorSetLayoutBinding,7> bindings{};
         for (std::uint32_t i=0;i<bindings.size();++i) {
             bindings[i].binding=i;
             bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -399,6 +401,22 @@ struct DeviceContext::Impl {
         vkDestroyShaderModule(device,module5,nullptr);
         verify(result5,"create length-wind pipeline");
         length_wind_pipeline=created5;
+        const auto followers=load_shader(spirv.parent_path()/"loxfx_follower_publish.spv");
+        VkShaderModuleCreateInfo follower_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        follower_info.codeSize=followers.size()*sizeof(std::uint32_t);
+        follower_info.pCode=followers.data();
+        VkShaderModule follower_module=VK_NULL_HANDLE;
+        verify(vkCreateShaderModule(device,&follower_info,nullptr,&follower_module),
+               "create follower publication shader module");
+        sci.module=follower_module;
+        sci.pName="UpdateFollowHairVertices";
+        cpi.stage=sci;
+        VkPipeline created_followers=VK_NULL_HANDLE;
+        const VkResult follower_result=vkCreateComputePipelines(
+            device,VK_NULL_HANDLE,1,&cpi,nullptr,&created_followers);
+        vkDestroyShaderModule(device,follower_module,nullptr);
+        verify(follower_result,"create follower publication pipeline");
+        follower_pipeline=created_followers;
 
         VkCommandPoolCreateInfo poolci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolci.queueFamilyIndex=family;
@@ -474,7 +492,7 @@ struct GroomState::Impl {
     VkDescriptorPool descriptor_pool=VK_NULL_HANDLE;
     VkDescriptorSet set=VK_NULL_HANDLE, strand_set=VK_NULL_HANDLE;
     Buffer current, previous, rest, root_previous_previous, strand_data,
-           guide_rest_lengths;
+           guide_rest_lengths, tangents;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
     std::uint32_t local_dispatch_iterations=0, local_shader_iterations=0;
     VkDeviceSize vertex_bytes=0, root_history_bytes=0, strand_bytes=0,
@@ -496,7 +514,8 @@ std::uint64_t GroomState::allocated_buffer_bytes() const noexcept {
            impl_->rest.allocation_bytes+
            impl_->root_previous_previous.allocation_bytes+
            impl_->strand_data.allocation_bytes+
-           impl_->guide_rest_lengths.allocation_bytes;
+           impl_->guide_rest_lengths.allocation_bytes+
+           impl_->tangents.allocation_bytes;
 }
 
 DeviceContext::DeviceContext(const std::filesystem::path& spirv)
@@ -568,8 +587,11 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     groom->guide_rest_lengths.create(
         impl_->physical,impl_->device,guide_length_bytes,storage|transfer,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    groom->tangents.create(impl_->physical,impl_->device,bytes,
+                          storage|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,12};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,14};
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool.maxSets=2;
     pool.poolSizeCount=1;
@@ -590,14 +612,15 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
            "create groom descriptor sets");
     groom->set=sets[0];
     groom->strand_set=sets[1];
-    std::array<VkDescriptorBufferInfo,6> info{{
+    std::array<VkDescriptorBufferInfo,7> info{{
        {groom->current.handle,0,bytes},
        {groom->previous.handle,0,bytes},
        {groom->rest.handle,0,bytes},
        {groom->root_previous_previous.handle,0,root_bytes},
        {groom->rest.handle,0,bytes},
-       {groom->guide_rest_lengths.handle,0,guide_length_bytes}}};
-    std::array<VkWriteDescriptorSet,6> writes{};
+       {groom->guide_rest_lengths.handle,0,guide_length_bytes},
+       {groom->tangents.handle,0,bytes}}};
+    std::array<VkWriteDescriptorSet,7> writes{};
     for(std::uint32_t i=0;i<writes.size();++i){
         writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet=groom->set;
@@ -606,14 +629,15 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         writes[i].descriptorCount=1;
         writes[i].pBufferInfo=&info[i];
     }
-    std::array<VkDescriptorBufferInfo,6> motion_info{{
+    std::array<VkDescriptorBufferInfo,7> motion_info{{
        {groom->current.handle,0,bytes},
        {groom->previous.handle,0,bytes},
        {groom->root_previous_previous.handle,0,root_bytes},
        {groom->strand_data.handle,0,strand_bytes},
        {groom->rest.handle,0,bytes},
-       {groom->guide_rest_lengths.handle,0,guide_length_bytes}}};
-    std::array<VkWriteDescriptorSet,6> motion_writes{};
+       {groom->guide_rest_lengths.handle,0,guide_length_bytes},
+       {groom->tangents.handle,0,bytes}}};
+    std::array<VkWriteDescriptorSet,7> motion_writes{};
     for(std::uint32_t i=0;i<motion_writes.size();++i){
         motion_writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         motion_writes[i].dstSet=groom->strand_set;
@@ -812,6 +836,26 @@ void DeviceContext::record_length_wind(VkCommandBuffer cb,const GroomState& stat
                             0,1,&g.strand_set,0,nullptr);
     vkCmdPushConstants(cb,impl_->pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
                        0,sizeof(c),&c);
+    vkCmdDispatch(cb,g.groups,1,1);
+}
+
+void DeviceContext::record_followers(VkCommandBuffer cb,
+                                     const GroomState& state) const {
+    if(!impl_||!cb||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("follower pass belongs to another Vulkan context");
+    const auto& g=*state.impl_;
+    struct FollowerConstants {
+        std::uint32_t vertices,followers,guides,reserved;
+    };
+    const FollowerConstants data{g.vertices,g.followers,g.guides,0};
+    memory_barrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+    vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->follower_pipeline);
+    vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipeline_layout,
+                            0,1,&g.strand_set,0,nullptr);
+    vkCmdPushConstants(cb,impl_->pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
+                       0,sizeof(data),&data);
     vkCmdDispatch(cb,g.groups,1,1);
 }
 
