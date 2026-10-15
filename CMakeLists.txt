@@ -121,9 +121,20 @@ if(LOXFX_BUILD_VULKAN_SMOKE)
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VelocityShockPropagation.hlsl"
     VERBATIM)
   add_custom_target(loxfx_velocity_shock_shader DEPENDS "${LOXFX_VSP_SPV}")
+  set(LOXFX_LOCAL_SHAPE_SPV "${CMAKE_CURRENT_BINARY_DIR}/shaders/loxfx_local_shape.spv")
+  add_custom_command(
+    OUTPUT "${LOXFX_LOCAL_SHAPE_SPV}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+    COMMAND "${LOXFX_DXC_EXECUTABLE}" -spirv -T cs_6_6
+      -E LocalShapeConstraints -DLOXFX_SPIRV=1 -fspv-target-env=vulkan1.2
+      -Fo "${LOXFX_LOCAL_SHAPE_SPV}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LocalShapeConstraints.hlsl"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LocalShapeConstraints.hlsl"
+    VERBATIM)
+  add_custom_target(loxfx_local_shape_shader DEPENDS "${LOXFX_LOCAL_SHAPE_SPV}")
   add_library(loxfx_vulkan_smoke STATIC src/vulkan/smoke_context.cpp)
   add_dependencies(loxfx_vulkan_smoke loxfx_integration_shader
-    loxfx_strand_shader loxfx_velocity_shock_shader)
+    loxfx_strand_shader loxfx_velocity_shock_shader loxfx_local_shape_shader)
   # Internal smoke header exposes VkCommandBuffer; test consumers need Vulkan headers.
   target_link_libraries(loxfx_vulkan_smoke PUBLIC LoxFX::Core Vulkan::Vulkan)
   target_compile_features(loxfx_vulkan_smoke PUBLIC cxx_std_23)
@@ -184,6 +195,16 @@ if(LOXFX_ENABLE_D3D12_SHADERS OR LOXFX_BUILD_D3D12_SMOKE)
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VelocityShockPropagation.hlsl"
     VERBATIM)
   add_custom_target(loxfx_velocity_shock_dxil ALL DEPENDS "${LOXFX_VSP_DXIL}")
+  set(LOXFX_LOCAL_SHAPE_DXIL "${CMAKE_CURRENT_BINARY_DIR}/shaders/loxfx_local_shape.dxil")
+  add_custom_command(
+    OUTPUT "${LOXFX_LOCAL_SHAPE_DXIL}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+    COMMAND "${LOXFX_DXC_EXECUTABLE}" -T cs_6_6 -E LocalShapeConstraints
+      -Fo "${LOXFX_LOCAL_SHAPE_DXIL}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LocalShapeConstraints.hlsl"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LocalShapeConstraints.hlsl"
+    VERBATIM)
+  add_custom_target(loxfx_local_shape_dxil ALL DEPENDS "${LOXFX_LOCAL_SHAPE_DXIL}")
   # DXIL alone can be installed for explicit compiler-parity consumers,
   # but never ship the experimental native runtime in an SDK package.
   if(LOXFX_ENABLE_D3D12_SHADERS AND NOT LOXFX_BUILD_D3D12_SMOKE)
@@ -202,7 +223,7 @@ if(LOXFX_BUILD_D3D12_SMOKE)
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
   target_link_libraries(loxfx_d3d12_smoke PUBLIC LoxFX::Core d3d12 dxgi)
   add_dependencies(loxfx_d3d12_smoke loxfx_integration_dxil
-    loxfx_strand_dxil loxfx_velocity_shock_dxil)
+    loxfx_strand_dxil loxfx_velocity_shock_dxil loxfx_local_shape_dxil)
   if(MSVC)
     target_compile_options(loxfx_d3d12_smoke PRIVATE /W4)
   else()
