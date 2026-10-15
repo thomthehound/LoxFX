@@ -42,7 +42,8 @@ std::vector<char> shader_file(const std::filesystem::path& path) {
 
 struct Constants {
     std::uint32_t vertices, followers, guides, reserved;
-    float dt, gravity, damping, stiffness, range, pad0, pad1, pad2;
+    float dt, gravity, damping, stiffness, range;
+    float root_translation_x, root_translation_y, root_translation_z;
 };
 static_assert(sizeof(Constants) == 48);
 
@@ -51,7 +52,10 @@ void validate_parameters(const IntegrationParameters& p) {
         !std::isfinite(p.gravity) || !std::isfinite(p.damping) || p.damping < 0 ||
         !std::isfinite(p.global_stiffness) || p.global_stiffness < 0 ||
         p.global_stiffness > 1 || !std::isfinite(p.global_range) ||
-        p.global_range < 0 || p.global_range > 1)
+        p.global_range < 0 || p.global_range > 1 ||
+        !std::isfinite(p.root_translation_x) ||
+        !std::isfinite(p.root_translation_y) ||
+        !std::isfinite(p.root_translation_z))
         throw std::invalid_argument("invalid integration parameters");
 }
 
@@ -255,7 +259,7 @@ struct DeviceContext::Impl {
         if (model.HighestShaderModel < D3D_SHADER_MODEL_6_6)
             throw std::runtime_error("D3D12 device does not support Shader Model 6.6");
 
-        std::array<D3D12_ROOT_PARAMETER,4> roots{};
+        std::array<D3D12_ROOT_PARAMETER,5> roots{};
         for (UINT i=0;i<2;++i) {
             roots[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
             roots[i].Descriptor.ShaderRegister=i;
@@ -266,11 +270,15 @@ struct DeviceContext::Impl {
         roots[2].Descriptor.ShaderRegister=2;
         roots[2].Descriptor.RegisterSpace=0;
         roots[2].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
-        roots[3].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        roots[3].Constants.ShaderRegister=0;
-        roots[3].Constants.RegisterSpace=0;
-        roots[3].Constants.Num32BitValues=sizeof(Constants)/4;
+        roots[3].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;
+        roots[3].Descriptor.ShaderRegister=3;
+        roots[3].Descriptor.RegisterSpace=0;
         roots[3].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        roots[4].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        roots[4].Constants.ShaderRegister=0;
+        roots[4].Constants.RegisterSpace=0;
+        roots[4].Constants.Num32BitValues=sizeof(Constants)/4;
+        roots[4].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
 
         D3D12_ROOT_SIGNATURE_DESC signature{};
         signature.NumParameters=static_cast<UINT>(roots.size());
@@ -369,7 +377,8 @@ struct DeviceContext::Impl {
 struct GroomState::Impl {
     std::shared_ptr<void> context_lifetime;
     const void* context_id = nullptr;
-    ComPtr<ID3D12Resource> current, previous, rest;
+    ComPtr<ID3D12Resource> current, previous, rest, root_previous_previous;
+    std::uint64_t root_history_bytes=0;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0;
     std::uint64_t bytes=0;
     std::uint64_t committed_bytes=0;
@@ -408,15 +417,22 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
     g->guides=source.work.packed_guide_strands;
     g->groups=source.work.stages[0].thread_groups;
     g->bytes=static_cast<UINT64>(source.rest_positions.size())*sizeof(Float4);
+    g->root_history_bytes=static_cast<UINT64>(
+        source.work.packed_guide_strands)*2*sizeof(Float4);
     if(!g->bytes)throw std::invalid_argument("empty prepared hair buffers");
     const auto uav_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     const auto rest_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_NONE);
+    const auto history_desc=buffer_desc(g->root_history_bytes,
+                                       D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     const auto mutable_info=impl_->device->GetResourceAllocationInfo(0,1,&uav_desc);
     const auto immutable_info=impl_->device->GetResourceAllocationInfo(0,1,&rest_desc);
+    const auto history_info=impl_->device->GetResourceAllocationInfo(0,1,&history_desc);
     if(mutable_info.SizeInBytes==UINT64_MAX ||
-       immutable_info.SizeInBytes==UINT64_MAX)
+       immutable_info.SizeInBytes==UINT64_MAX ||
+       history_info.SizeInBytes==UINT64_MAX)
         throw std::runtime_error("invalid D3D12 groom buffer allocation requirements");
-    g->committed_bytes=2*mutable_info.SizeInBytes+immutable_info.SizeInBytes;
+    g->committed_bytes=2*mutable_info.SizeInBytes+immutable_info.SizeInBytes+
+                       history_info.SizeInBytes;
 
     g->current=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);
@@ -424,23 +440,37 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);
     g->rest=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_COPY_DEST);
-    auto upload=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_UPLOAD,
+    g->root_previous_previous=allocate_buffer(
+              impl_->device.Get(),g->root_history_bytes,D3D12_HEAP_TYPE_DEFAULT,
+              D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_DEST);
+    auto upload=allocate_buffer(impl_->device.Get(),g->bytes+g->root_history_bytes,D3D12_HEAP_TYPE_UPLOAD,
               D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_GENERIC_READ);
     void* mapped=nullptr;
     D3D12_RANGE none{0,0};
     checked(upload->Map(0,&none,&mapped),"map one-time D3D12 upload");
     std::memcpy(mapped,source.rest_positions.data(),static_cast<std::size_t>(g->bytes));
+    auto* roots=reinterpret_cast<Float4*>(static_cast<char*>(mapped)+g->bytes);
+    for(std::uint32_t guide=0;guide<source.work.packed_guide_strands;++guide){
+        const std::size_t first=static_cast<std::size_t>(guide)*
+            (source.followers_per_guide+1)*source.vertices_per_strand;
+        roots[guide*2]=source.rest_positions[first];
+        roots[guide*2+1]=source.rest_positions[first+1];
+    }
     upload->Unmap(0,nullptr);
 
     auto* cmd=impl_->begin();
     for(ID3D12Resource* target:{g->current.Get(),g->previous.Get(),g->rest.Get()})
         cmd->CopyBufferRegion(target,0,upload.Get(),0,g->bytes);
+    cmd->CopyBufferRegion(g->root_previous_previous.Get(),0,
+                          upload.Get(),g->bytes,g->root_history_bytes);
     transition(cmd,g->current.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cmd,g->previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cmd,g->rest.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    transition(cmd,g->root_previous_previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     impl_->submit(); // Diagnostic upload fence only; staging then released.
     return GroomState(std::move(g));
 }
@@ -455,7 +485,8 @@ void DeviceContext::record_integration(ID3D12GraphicsCommandList* cmd,
     if(steps==0||steps>4096)throw std::invalid_argument("integration steps out of range");
     const auto& g=*groom.impl_;
     Constants c{g.vertices,g.followers,g.guides,0,p.time_step,p.gravity,
-                p.damping,p.global_stiffness,p.global_range,0,0,0};
+                p.damping,p.global_stiffness,p.global_range,
+                p.root_translation_x,p.root_translation_y,p.root_translation_z};
     // Exactly the same source-derived stage maths as Vulkan. Resource and
     // root bindings are backend-native; no descriptors/heap for this stage.
     uav_barrier(cmd);
@@ -464,7 +495,9 @@ void DeviceContext::record_integration(ID3D12GraphicsCommandList* cmd,
     cmd->SetComputeRootUnorderedAccessView(0,g.current->GetGPUVirtualAddress());
     cmd->SetComputeRootUnorderedAccessView(1,g.previous->GetGPUVirtualAddress());
     cmd->SetComputeRootShaderResourceView(2,g.rest->GetGPUVirtualAddress());
-    cmd->SetComputeRoot32BitConstants(3,sizeof(Constants)/4,&c,0);
+    cmd->SetComputeRootUnorderedAccessView(
+        3,g.root_previous_previous->GetGPUVirtualAddress());
+    cmd->SetComputeRoot32BitConstants(4,sizeof(Constants)/4,&c,0);
     for (std::uint32_t i=0;i<steps;++i) {
         cmd->Dispatch(g.groups,1,1);
         if(i+1<steps)uav_barrier(cmd);
