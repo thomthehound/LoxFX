@@ -327,6 +327,40 @@ int main(int argc,char** argv) {
               tilt_data[0].vsp_quaternion.z > -0.10f &&
               std::abs(tilt_data[0].vsp_translation_coefficient.w-0.42f)<0.0001f,
               "Vulkan quaternion rotates +X toward -Y without VSP override");
+        // Codex P2 regression: near-antiparallel root motion must retain
+        // the actual 179.x-degree turn, not snap to an arbitrary 180.
+        // First vertex is pinned; the second falls from (offset,+1,0)
+        // to (offset,-1,0) in one Verlet step (g*dt^2 == 2).
+        for(float transverse : {0.007f,0.000087f,0.0f}) {
+            auto hair=fixture(0.0f,1);
+            hair.positions[1].x=transverse;
+            auto prepared=loxfx::prepare_groom(hair,{.followers_per_guide=1});
+            check(prepared.has_value(),"prepare antiparallel test groom");
+            auto gpu=context.prepare(*prepared);
+            auto command=context.begin_diagnostic_commands();
+            context.record_integration(command,gpu,
+                {.time_step=dt,.gravity=7200.0f,.damping=0.0f},1);
+            context.record_strand_level(command,gpu,
+                {.velocity_shock_coefficient=0.2f,.acceleration_threshold=100.0f});
+            context.submit_diagnostic_and_wait();
+            const auto motion=context.diagnostic_read_strand_data(gpu);
+            const auto q=motion[0].vsp_quaternion;
+            const float expected_w=transverse/std::sqrt(1.0f+transverse*transverse);
+            check(std::isfinite(q.x)&&std::isfinite(q.y)&&
+                  std::isfinite(q.z)&&std::isfinite(q.w),
+                  "near-antiparallel rotation quaternion remains finite");
+            check(std::abs(q.w-expected_w)<0.00002f,
+                  "near-antiparallel rotation keeps the actual half-angle");
+            const float old_x=transverse, old_y=1.0f;
+            // Apply the quaternion to the previous proximal direction.
+            const float mapped_x=(1-2*(q.y*q.y+q.z*q.z))*old_x+
+                                  2*(q.x*q.y-q.w*q.z)*old_y;
+            const float mapped_y=2*(q.x*q.y+q.w*q.z)*old_x+
+                                  (1-2*(q.x*q.x+q.z*q.z))*old_y;
+            check(std::abs(mapped_x-transverse)<0.00005f &&
+                  std::abs(mapped_y+1.0f)<0.00005f,
+                  "quaternion maps previous direction onto actual new direction");
+        }
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared

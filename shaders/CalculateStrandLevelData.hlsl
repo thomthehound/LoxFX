@@ -55,12 +55,28 @@ float4 between_vectors(float3 old_dir, float3 new_dir) {
     float3 a = old_dir * rsqrt(old_len2);
     float3 b = new_dir * rsqrt(new_len2);
     float dot_ab = clamp(dot(a,b), -1.0f, 1.0f);
+    float3 cross_ab = cross(a, b);
     if (dot_ab < -0.9999f) {
-        float3 axis = abs(a.x) < 0.8f ? float3(1,0,0) : float3(0,1,0);
-        axis = normalize(cross(a, axis));
-        return float4(axis, 0);
+        // Near 180 degrees, the usual (cross, 1+dot) formula loses
+        // precision in its scalar component. Preserve the *actual* angle
+        // and axis instead of snapping ~179.2-degree turns to 180.
+        float cross_len2 = dot(cross_ab, cross_ab);
+        if (cross_len2 <= 1e-20f) {
+            // Only the numerically indistinguishable exact reversal has
+            // no preferred rotation axis. Choose a stable perpendicular.
+            float3 helper = abs(a.x) < 0.8f ? float3(1,0,0) : float3(0,1,0);
+            return float4(normalize(cross(a, helper)), 0);
+        }
+        // |a+b|/2 gives cos(theta/2) without catastrophic cancellation
+        // of 1+dot(a,b), even if the dot rounds to exactly -1.
+        float3 sum = a+b;
+        float half_cos = 0.5f*sqrt(dot(sum,sum));
+        float half_sin = sqrt(max(0.0f,1.0f-half_cos*half_cos));
+        float4 near_opposite = float4(cross_ab*rsqrt(cross_len2)*half_sin,
+                                     half_cos);
+        return near_opposite*rsqrt(dot(near_opposite,near_opposite));
     }
-    float4 q = float4(cross(a, b), 1.0f + dot_ab);
+    float4 q = float4(cross_ab, 1.0f + dot_ab);
     return q * rsqrt(max(dot(q,q), 1e-16f));
 }
 float3 rotate_vec(float4 q, float3 v) {
