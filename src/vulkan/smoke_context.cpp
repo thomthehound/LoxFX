@@ -892,6 +892,31 @@ std::vector<Float4> DeviceContext::diagnostic_read_positions(const GroomState& g
     vkUnmapMemory(impl_->device,staging.memory);
     return result;
 }
+std::vector<Float4> DeviceContext::diagnostic_read_tangents(const GroomState& g){
+    if(!impl_||!g.impl_||g.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("diagnostic readback on wrong device context");
+    const auto bytes=g.impl_->vertex_bytes;
+    Buffer staging;
+    staging.create(impl_->physical,impl_->device,bytes,VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const auto cb=impl_->begin_diagnostics();
+    memory_barrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,
+                   VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+    VkBufferCopy copy{};
+    copy.size=bytes;
+    vkCmdCopyBuffer(cb,g.impl_->tangents.handle,staging.handle,1,&copy);
+    memory_barrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_READ_BIT);
+    impl_->submit_diagnostics();
+    std::vector<Float4> result(static_cast<std::size_t>(bytes)/sizeof(Float4));
+    void* mapped=nullptr;
+    verify(vkMapMemory(impl_->device,staging.memory,0,bytes,0,&mapped),
+           "map tangent diagnostic readback");
+    std::memcpy(result.data(),mapped,static_cast<std::size_t>(bytes));
+    vkUnmapMemory(impl_->device,staging.memory);
+    return result;
+}
 std::vector<Float4> DeviceContext::diagnostic_read_root_history(const GroomState& g){
     if(!impl_||!g.impl_||g.impl_->context_id!=impl_.get())
         throw std::invalid_argument("diagnostic readback on wrong device context");
