@@ -56,9 +56,11 @@ rotation following, scalp fitting and actual hair shading are **not** solved
 by this stage. Source geometry receives only a rough visual fit; judge
 artistic quality after examining a hardware-backed viewport.
 
-Interactive Reset/Step/Play invoke the actual LoxFX native pipeline. An
-arbitrary timeline seek must rewind and replay native steps (bounded); the
-host's analytic presentation-only seek is intentionally overridden.
+Interactive Reset/Step/Play invoke the actual LoxFX native pipeline. The
+example **composes** the portrait stage under a provider-owned root instead
+of inheriting its analytic seek callback. The root intentionally does not
+implement `godauldron_seek`; Godauldron's existing playback service
+therefore uses bounded reset and replay for the stateful GPU solver.
 Capture metadata truthfully identifies native simulation, the diagnostic
 GPU→CPU→Godot presentation path, and unmeasured GPU frame cost.
 
