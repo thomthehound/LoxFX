@@ -42,3 +42,24 @@ jobs:
       - name: Descriptor generated for opt-in Godot project
         shell: bash
         run: test -s build/godot/loxfx.gdextension
+      - name: Verify native extension loads and can update a real groom
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=adapters/godot/tests
+          mkdir -p "$project/addons/loxfx/bin" "$project/grooms" build/godot-engine
+          cp build/godot/loxfx.gdextension "$project/addons/loxfx/loxfx.gdextension"
+          library="$(find build/godot/adapters/godot -name 'libloxfx_godot.so' -print -quit)"
+          test -n "$library"
+          cp "$library" "$project/addons/loxfx/bin/libloxfx_godot.so"
+          curl --fail --location --retry 3 --output "$project/grooms/Ratboy_mohawk.tfx" \
+            https://raw.githubusercontent.com/thomthehound/TressFX/master/bin/Objects/HairAsset/Ratboy/Ratboy_mohawk.tfx
+          curl --fail --location --retry 3 --output build/godot-engine/godot.zip \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -q build/godot-engine/godot.zip -d build/godot-engine
+          engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
+          test -n "$engine"
+          chmod +x "$engine"
+          "$engine" --headless --path "$project" --editor --import --quit
+          "$engine" --headless --path "$project" --script res://runtime_smoke.gd
