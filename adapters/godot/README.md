@@ -79,6 +79,59 @@ Those will require a separately reviewed, backend-local GPU interop contract
 and a confirmed Godot renderer device and queue lifetime/synchronization
 policy. Godauldron must not invent that policy on its behalf.
 
+## Actual native GPU simulation — opt-in diagnostic mode
+
+The adapter can also execute the **real LoxFX native compute stage chain** in
+a Godot game. This is an explicit opt-in until native renderer/device
+interoperability has been implemented. Enable it at configure time:
+
+```shell
+cmake -S . -B build/godot -DLOXFX_BUILD_GODOT_ADAPTER=ON \
+  -DLOXFX_GODOT_NATIVE_DIAGNOSTIC=ON \
+  -DLOXFX_GODOT_CPP_SOURCE_DIR=/path/to/godot-cpp
+cmake --build build/godot --config Release --target loxfx_godot
+```
+
+Provide `dxc` and the Vulkan SDK (Linux) or Windows D3D12 SDK (Windows).
+The existing source-derived Vulkan/D3D12 backend targets and their shared
+HLSL shaders are compiled alongside the extension **but remain internal**.
+The extension does not inherit Godot's graphics device or scheduler: it
+uses one LoxFX-owned standalone diagnostic device context for each native
+groom, then waits for the complete batch and copies finished positions
+through CPU memory into Godot's dynamic line vertex buffer. It cannot
+establish production game-engine performance or native resource interop.
+
+Package all six compiled `.spv` files (Linux) or `.dxil` files (Windows)
+from `build/godot/shaders/` beside your extension. After
+`load_tfx_bytes()`:
+
+```gdscript
+var shader := ("res://shaders/loxfx_integration.dxil"
+    if OS.get_name() == "Windows" else
+    "res://shaders/loxfx_integration.spv")
+assert(groom.start_native_diagnostic(shader))
+assert(groom.step_native_diagnostic(1.0 / 60.0, 9.81, 0.08,
+    Vector3(0.15, 0, 0), Vector3.ZERO))
+print(groom.get_native_diagnostic_backend(),
+    groom.get_native_diagnostic_steps(),
+    groom.get_native_diagnostic_root_position())
+assert(groom.reset_native_diagnostic())
+groom.stop_native_diagnostic()
+```
+
+No native simulation is run automatically in `_process`. The game or
+Godauldron experiment owns the fixed-step clock, root translations,
+controls and presentation state. Current root attachments support
+**translation only**, not full skeletal rotation, scalp deformation or
+head collision. Every update waits for GPU completion and downloads a
+full packed position snapshot: use this mode to see moving real LoxFX
+strands, not to benchmark a shippable renderer.
+
+For a Godauldron experiment that drives real LoxFX simulation and inherits
+the generic portrait stage, see [optional Godauldron package]
+(examples/godauldron/README.md). It is provider-owned and is never loaded
+by LoxFX's core or Godauldron's built-in experiment catalog.
+
 ## Next acceptance criteria
 
 1. Test against the selected Godot native API on Linux and Windows.
