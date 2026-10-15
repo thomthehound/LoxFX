@@ -1,0 +1,102 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+
+name: Vulkan integration stage
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  vulkan-software-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Vulkan software device and headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers vulkan-tools vulkan-validationlayers
+      - name: Install official DXC for shader validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dxc"
+          curl --fail --location --retry 3 \
+            https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP/dxc"
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/dxc/lib" >> "$GITHUB_ENV"
+      - name: Configure
+        run: cmake -S . -B build/gpu -DLOXFX_BUILD_VULKAN_SMOKE=ON -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build HLSL and Vulkan runner
+        run: cmake --build build/gpu --parallel 2
+      - name: Execute compute shader on software Vulkan
+        run: |
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
+          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          ctest --test-dir build/gpu --output-on-failure -R '^loxfx_vulkan_integration$' -V
+      - name: Validate installed package excludes experimental Vulkan API
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --install build/gpu --prefix "$RUNNER_TEMP/loxfx-installed"
+          test ! -e "$RUNNER_TEMP/loxfx-installed/include/loxfx/vulkan"
+          ! grep -R 'LoxFX::Vulkan' "$RUNNER_TEMP/loxfx-installed/lib/cmake/LoxFX"
+
+  vulkan-windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Vulkan headers and loader
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          if (!(Test-Path $vcpkg)) { throw "vcpkg unavailable on Windows runner" }
+          & $vcpkg install vulkan:x64-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install official Windows DXC
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
+          $dest = Join-Path $env:RUNNER_TEMP 'dxc'
+          Invoke-WebRequest -Uri 'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dest
+          $compiler = Get-ChildItem -Path $dest -Recurse -Filter 'dxc.exe' |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+            Select-Object -First 1
+          if (!$compiler) { throw "DXC x64 compiler not found in official archive" }
+          "LOXFX_DXC=$($compiler.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Configure Vulkan backend
+        shell: pwsh
+        run: |
+          cmake -S . -B build/gpu -A x64 -DLOXFX_BUILD_VULKAN_SMOKE=ON -DLOXFX_ENABLE_D3D12_SHADERS=ON -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" "-DLOXFX_DXC_EXECUTABLE=$env:LOXFX_DXC"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile Vulkan backend, SPIR-V and D3D12 SM6.6 DXIL
+        run: cmake --build build/gpu --config Release --parallel 2
+      - name: Verify installed shader outputs
+        shell: pwsh
+        run: |
+          if (!(Test-Path build/gpu/shaders/loxfx_integration.dxil)) { throw "Missing SM6.6 DXIL output" }
+          if (!(Test-Path build/gpu/shaders/loxfx_integration.spv)) { throw "Missing Vulkan SPIR-V output" }
+      - name: Install SDK and configure downstream package
+        shell: pwsh
+        run: |
+          cmake --install build/gpu --config Release --prefix "$env:RUNNER_TEMP/loxfx-installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $headers = Join-Path $env:RUNNER_TEMP 'loxfx-installed/include/loxfx/vulkan'
+          if (Test-Path $headers) { throw "Experimental Vulkan headers leaked into SDK installation" }
+          $exportFile = Get-ChildItem -Path "$env:RUNNER_TEMP/loxfx-installed" -Recurse -Filter 'LoxFXTargets.cmake' | Select-Object -First 1
+          if (!$exportFile) { throw "Missing SDK exported targets" }
+          if ((Get-Content $exportFile.FullName -Raw) -match 'LoxFX::Vulkan') {
+            throw "Experimental Vulkan target leaked into SDK package"
+          }
+          cmake -S tests/package_smoke -B build/consumer -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" "-DCMAKE_PREFIX_PATH=$env:RUNNER_TEMP/loxfx-installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/consumer --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

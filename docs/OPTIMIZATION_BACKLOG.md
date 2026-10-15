@@ -28,6 +28,7 @@ reproducible GPU and correctness evidence, or documented rejection.
 | OPT-008 | P2 | blocked | GPU correctness and numerical baseline | Compact and mixed-precision device buffers |
 | OPT-009 | P0 | implemented-awaiting-measurement | Physical GPU baseline | Verify elimination of legacy master/follower over-dispatch |
 | OPT-010 | P1 | blocked | Quality and GPU timing baseline | Higher-fidelity follower interpolation per simulated guide |
+| OPT-011 | P1 | blocked | Multi-groom persistent GPU runtime | Suballocate buffers and manage temporary staging lifetime |
 
 ## OPT-001 — Duplicate static follower data
 
@@ -74,6 +75,13 @@ followers, VRAM and frame time.
 **Acceptance:** reset, motion/contact and publication correctness with lower measured VRAM/upload requirements or reduced bandwidth, no new readbacks and no unacceptable frame-time regression. [Issue #7](https://github.com/thomthehound/LoxFX/issues/7).
 
 ## OPT-003 — Stage-major scheduling and unnecessary synchronization
+
+**Architecture prerequisite:** [issue #13](https://github.com/thomthehound/LoxFX/issues/13)
+requires replacing per-groom Vulkan device, pipeline, submission and fence
+ownership with a shared backend context and host-controlled pass recording.
+Profiling fewer barriers on the existing synchronous per-groom object would
+optimize the wrong ownership boundary.
+
 
 **Observation:** Six stages dispatch across all grooms with per-object
 bindings and barriers. Short strands can repeat local-shape dispatches; the
@@ -197,6 +205,38 @@ memory and perceptual error. See
 **Evidence / source:** TressFX 4.1 `UpdateFollowHairVertices` linear root-offset formula; physically guided interpolation approaches described in [modernization research](MODERNIZATION_RESEARCH.md). **Suspected cost:** additional computation could increase runtime; possible fidelity-per-guide gain unmeasured.
 **Acceptance:** documented visual-motion improvement at controlled simulated guide count with practical full-frame performance on consumer GPU hardware. Open dedicated issue after a visual baseline and style fixtures exist.
 
+## OPT-011 — Dedicated Vulkan allocation overhead and staging lifetime
+
+**Architecture prerequisite:** [issue #13](https://github.com/thomthehound/LoxFX/issues/13)
+moves device-level allocation policy and upload staging outside a groom;
+this avoids per-groom device and pipeline duplication before any custom
+suballocator work. No measured savings yet.
+
+
+**Evidence / source:** the deleted monolithic
+`src/vulkan/integration.cpp` created full devices and retained upload
+staging per groom. Its replacement `src/vulkan/smoke_context.cpp`
+has one explicit device context, independent groom GPU buffers and
+temporary host staging freed after its initialization/diagnostic
+submission completes. Three dynamic/rest buffer allocations per groom
+are still dedicated and have no measured performance baseline.
+
+**Suspected cost:** multiple dedicated Vulkan allocations can fragment
+heaps and add allocation overhead at scene load. Shared staging and
+suballocation may help, but no multi-groom hardware measurements exist.
+`GroomState::allocated_buffer_bytes()` reports the three allocated
+device buffers (not VRAM residency or transient staging).
+
+**Experiment:** after multiple grooms and asynchronous command submission
+work, compare shared staging suballocation/recycling and device-local
+suballocation against dedicated allocations. Measure host/VRAM allocation
+budgets, upload latency, GPU stalls, full-frame time and fragmentation on
+consumer hardware. No early allocator framework before profiling.
+
+**Acceptance:** reduced measured committed memory or allocation overhead
+without broken transfer fences, ownership, correctness, or slower whole-frame
+throughput. **Status:** blocked until multi-groom runtime and GPU profiling.
+
 ## Evidence and handoff log
 
 - **2026-10-15, PR #2:** Source-derived six-pass work plan and verified guide
@@ -204,6 +244,24 @@ memory and perceptual error. See
 - **2026-10-15, PR #3:** Deterministic prepared interleaved follower data,
   real Ratboy smoke tests and static upload sizes. Retain current
   correctness path until GPU buffer consumers are audited (OPT-001/002).
+- **2026-10-15, architecture remediation:** Replaced the per-groom
+  device-owning runtime with an internal shared/borrowed Vulkan context,
+  record-only integration, two-groom CI and temporary setup/readback staging.
+  Frame submission and multi-groom allocation optimization remain OPT-003
+  and OPT-011, unmeasured on consumer GPUs.
+- **2026-10-15, subsequent Vulkan review:** Added separate allocation-size
+  admission and transactional allocation retry across eligible adapters;
+  this is correctness work during initialization, not a frame speedup.
+  Multi-groom allocation reuse remains OPT-011.
+- **2026-10-15, Vulkan stage-one review:** Validated mutable prepared
+  topology before GPU access and selected a groom-compatible adapter.
+  Removed duplicate CPU upload copies and included staging in actual
+  allocation counts. Deferred multi-groom suballocation/reuse (OPT-011).
+- **2026-10-15, Vulkan stage-one:** Persistent current/previous/rest device
+  buffers and a single source-derived integration pass added as an opt-in
+  native Vulkan runner. The synchronous batch fence is a correctness harness,
+  not the production frame scheduler (OPT-003). Full-strand static/history
+  allocations remain for now (OPT-001, OPT-002). Hardware timings pending.
 - **2026-10-15:** Created this canonical list and required capture rule in
   `AGENTS.md`. No physical-GPU performance data exists yet.
 

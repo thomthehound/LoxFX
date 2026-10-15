@@ -25,8 +25,10 @@ performance comparison independent of LoxFX.
 
 - C++23 independent core with CMake 3.28+; Windows and Linux first. No engine or GPU runtime
   dependency in asset import or CPU-only builds.
-- GPU shipping candidate: Vulkan 1.4 or D3D12 SM6.6, with independently
-  checked actual runtime capabilities. Shader Model is not a Vulkan feature.
+- **First-class shipping backends:** Vulkan 1.4 and D3D12 SM6.6, each with
+  independently checked actual runtime capabilities, correctness and
+  performance. Shader Model is not a Vulkan feature; DXIL compilation alone
+  is not proof of native D3D12 execution.
 - Fast native subgroup/wave arithmetic for relevant workloads; optional
   higher tiers may use larger feature sets, including matrix facilities only
   for genuinely matrix-shaped work. WMMA is not required for normal hair
@@ -84,10 +86,31 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ### M1 — First complete strand simulation
 
+**Architecture hold on draft PR #11:** shared-device and command-recording
+ownership has been corrected in the experimental smoke harness, with the
+previous monolithic `IntegrationRuntime` source removed. This is still
+not a shipping API; native D3D12 execution, failure injection, host
+interop, full solver and hardware performance qualification remain. See
+[GPU runtime architecture](GPU_RUNTIME_ARCHITECTURE.md) and
+[issue #13](https://github.com/thomthehound/LoxFX/issues/13).
+
+
 - [x] Trace source stage order, master strand indexing, dispatch counts, and
   unused follower work; implement checked source-aligned guide-work planning.
 - [x] Prepare interleaved persistent guide/follower buffers, rest lengths,
   tangents and provenance without modifying imported authoring data.
+- [x] Demonstrate an **experimental** native Vulkan/DXC integration-stage
+  smoke test with persistent buffers, synchronization, readback assertions
+  and timestamps (first stage only; not a production backend API).
+- [x] Replace the experimental per-groom Vulkan runtime with a shared
+  standalone/borrowed device context, per-groom RAII buffers, and record-only
+  compute methods. Test two independent grooms using one logical device.
+- [ ] Validate host-supplied command buffer interoperability, fault-injected
+  resource creation, frames in flight and production scheduling.
+- [x] Compile identical first-stage HLSL to Vulkan SPIR-V and D3D12 SM6.6
+  DXIL in Windows CI, with backend-neutral parameter semantics.
+- [ ] Execute the same stage natively through D3D12 resources, root binding,
+  dispatch, fences and GPU timestamps; compare numerical behavior with Vulkan.
 - [ ] Build a native GPU executor for the whole source stage chain; the
   work-plan alone does not simulate hair or validate a shader port.
 
@@ -96,8 +119,10 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
   propagation, wind, length iterations, follow strands and dispatch ordering.
 - Account for original engine-interface resource ownership, barriers,
   scheduling and state publication; no orphan compute-kernel collection.
-- Native Vulkan first, D3D12 from shared shader/data contracts. Preserve a
-  deterministic test fixture and useful reference comparisons.
+- Vulkan and D3D12 share the canonical shader mathematics and neutral
+  simulation inputs, with backend-specific binding and execution. Build and
+  test both backends at each meaningful solver milestone; preserve a
+  deterministic cross-backend fixture and source-reference comparisons.
 - Distinguish authored data from derived per-device representations.
 
 **Gate:** a moving groom runs with plausible, tested dynamics; per-pass and

@@ -165,6 +165,54 @@ prepare_impl(const GroomAsset& asset, const GroomPreparation& options) {
 
 } // namespace
 
+std::expected<void, std::string> validate_prepared_groom(const PreparedGroom& g) {
+    const std::uint32_t iterations = g.vertices_per_strand == 64
+        ? g.work.shader_local_shape_iterations : g.work.stages[3].iterations;
+    const auto expected = make_simulation_work_plan({
+        g.authored_guide_strands, g.vertices_per_strand,
+        g.followers_per_guide, iterations});
+    if (!expected) return std::unexpected(expected.error());
+
+    if (g.work.packed_guide_strands != expected->packed_guide_strands ||
+        g.work.packed_total_strands != expected->packed_total_strands ||
+        g.work.packed_total_vertices != expected->packed_total_vertices ||
+        g.work.shader_local_shape_iterations != expected->shader_local_shape_iterations ||
+        g.work.planned_lane_invocations != expected->planned_lane_invocations ||
+        g.work.reference_lane_invocations != expected->reference_lane_invocations)
+        return std::unexpected("prepared groom topology or dispatch accounting differs from work plan");
+    for (std::size_t i = 0; i < expected->stages.size(); ++i) {
+        const auto& a = g.work.stages[i];
+        const auto& b = expected->stages[i];
+        if (a.stage != b.stage || a.thread_groups != b.thread_groups ||
+            a.iterations != b.iterations)
+            return std::unexpected("prepared groom dispatch stages are inconsistent");
+    }
+    if (g.rest_positions.size() != expected->packed_total_vertices ||
+        g.rest_tangents.size() != expected->packed_total_vertices ||
+        g.rest_segment_lengths.size() != expected->packed_total_vertices ||
+        g.follower_root_offsets.size() != expected->packed_total_strands ||
+        g.source_guide_indices.size() != expected->packed_total_strands)
+        return std::unexpected("prepared groom buffers do not match topology");
+    for (const auto& p : g.rest_positions) {
+        if (!finite(p)) return std::unexpected("nonfinite prepared rest position");
+    }
+    for (const auto& p : g.rest_tangents) {
+        if (!finite(p)) return std::unexpected("nonfinite prepared rest tangent");
+    }
+    for (float n : g.rest_segment_lengths) {
+        if (!std::isfinite(n) || n < 0)
+            return std::unexpected("invalid prepared rest segment length");
+    }
+    for (const auto& p : g.follower_root_offsets) {
+        if (!finite(p)) return std::unexpected("nonfinite follower offset");
+    }
+    for (std::uint32_t index : g.source_guide_indices) {
+        if (index >= g.authored_guide_strands)
+            return std::unexpected("invalid source guide mapping");
+    }
+    return {};
+}
+
 std::size_t PreparedGroom::static_buffer_bytes() const noexcept {
     return rest_positions.size() * sizeof(Float4) +
            rest_tangents.size() * sizeof(Float4) +

@@ -13,6 +13,17 @@ important decisions across sessions.
   experimental projects in its source, docs, issues, PRs or release notes.
 - New code requires **C++23**, CMake 3.28+, Apache-2.0 SPDX headers, and
   `windows-latest` / Ubuntu CI. Preserve MIT notices on imported AMD source.
+- **D3D12 SM6.6 and Vulkan 1.4 are first-class production targets.** Any
+  common shader stage must compile to both DXIL and SPIR-V on Windows CI.
+  Do not deepen one backend without tracking the other to parity; keep
+  backend-specific binding, scheduling and resource code in separate modules.
+  Native D3D12 runtime parity is required, not replaced by DXIL compilation.
+- **Device/context ownership is outside per-groom simulation.** A groom must
+  never create its own graphics device, select another adapter implicitly,
+  compile device-invariant pipelines, or submit/fence-wait on every stage.
+  Host-owned and explicit standalone device contexts share the same recorder.
+  GPU resources must be failure-safe RAII with owned/borrowed handles clear.
+  See [GPU runtime architecture](docs/GPU_RUNTIME_ARCHITECTURE.md).
 - Preserve source-grounded simulation behavior, data ownership, dispatch
   dependencies, synchronization and publication when porting TressFX.
   Deliberate departures require reasons and correctness comparisons.
@@ -23,6 +34,18 @@ important decisions across sessions.
   do not add mandatory engine or physics dependencies.
 - Do not mandate research-grade techniques or exotic accelerator features
   without demonstrated quality/performance improvements.
+
+## Pre-merge self-review (required even without Codex)
+
+Do not treat automated review or green CI as a substitute for examining the
+current PR *head* and the changed code in context. Use the
+[review protocol](docs/REVIEW_PROTOCOL.md), recording a short evidence table
+for every substantial PR. Review architecture before individual defects,
+then correctness/failure paths, cross-backend compatibility, performance
+hot paths and installed-SDK boundaries. Verify the latest CI SHA and any
+unresolved review comments; intentionally leave work draft if a
+merge-blocking concern remains. Code review is a responsibility of the
+maintainer/agent, not dependent on external reviewer credits.
 
 ## Required optimization-discovery and handoff practice
 

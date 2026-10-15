@@ -16,3 +16,8 @@ https://github.com/thomthehound/TressFX.
 Future imports of AMD code must preserve the original MIT text and copyright
 notices with the imported files and document their provenance here. Third-party
 materials and assets require separate license review before distribution.
+
+The optional Vulkan HLSL integration stage is adapted from AMD TressFX 4.1
+integration and guide-indexing logic (copyright Advanced Micro Devices, Inc.,
+2019), distributed under MIT with its source header. The remainder of the
+new Vulkan runtime is independently authored under Apache-2.0.

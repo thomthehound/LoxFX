@@ -48,6 +48,51 @@ Downstream projects can use `find_package(LoxFX CONFIG REQUIRED)` and
 `target_link_libraries(app PRIVATE LoxFX::Core)`. The package exports its
 C++23 requirement. The public ABI is not yet frozen.
 
+## Optional Vulkan integration milestone
+
+**Architecture review:** the stage-one Vulkan module is a working
+experimental compute harness, **not a shipping runtime API**. The current
+per-groom device ownership has now been replaced with **one shared Vulkan
+context, separate per-groom buffers and caller-recorded command batches**.
+Native D3D12 runtime execution, production scheduler validation and hardware
+profiling still remain before this becomes an installed SDK interface. See
+[the GPU runtime architecture decision](docs/GPU_RUNTIME_ARCHITECTURE.md)
+and [issue #13](https://github.com/thomthehound/LoxFX/issues/13).
+
+
+A native Vulkan module can compile and execute the **first** TressFX-inspired
+simulation stage on persistent GPU buffers. It tests static-root Verlet
+integration with explicit command submission, GPU memory barriers, diagnostic
+readback and device timestamps. **It is not yet a six-stage hair simulator**;
+bone skinning, full constraint solving, collisions and follower publication
+remain pending.
+
+Build with the Vulkan SDK and an installed DXC executable:
+
+```sh
+cmake -S . -B build/gpu -DLOXFX_BUILD_VULKAN_SMOKE=ON -DBUILD_TESTING=ON
+cmake --build build/gpu --config Release
+ctest --test-dir build/gpu -C Release -R loxfx_vulkan_integration -V
+```
+
+The smoke harness is opt-in and not installed. The SDK still exports
+only its neutral `LoxFX::Core` target. CI executes the stage through
+Mesa software Vulkan for functional validation, **not**
+representative GPU performance. Hardware qualification remains required.
+See [stage-one execution notes](docs/VULKAN_STAGE_ONE.md).
+
+## Direct3D 12 status
+
+Direct3D 12 / Shader Model 6.6 and Vulkan 1.4 are **equal intended production
+backends**. The first stage's simulation input semantics and HLSL algorithm
+are shared. Windows CI compiles the exact same stage to D3D12 DXIL and Vulkan
+SPIR-V. **DXIL compilation is not a D3D12 runtime**; native D3D12 resource,
+root-signature, command-list, fence and GPU timestamp execution must follow.
+
+See the [backend parity contract](docs/BACKEND_PARITY.md). Neither backend
+should introduce incompatible physics behavior or constrain the other to a
+slow fallback.
+
 ## Direction
 
 - Vulkan 1.4 and D3D12 Shader Model 6.6 are the intended shipping GPU floors;
