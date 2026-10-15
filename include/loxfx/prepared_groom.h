@@ -40,6 +40,7 @@ struct PreparedGroom {
     std::uint32_t authored_guide_strands = 0;
     std::uint32_t vertices_per_strand = 0;
     std::uint32_t followers_per_guide = 0;
+    float follower_tip_separation = 0.0f;
 
     // GPU-bound, strand-major arrays. All are sized to work.packed_total_vertices
     // except follower_root_offsets and source_guide_indices, which are
