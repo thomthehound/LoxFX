@@ -136,6 +136,11 @@ for a speculative gain.
 7. Use realistic animated scalp, wind, collisions, guide/follower ratios
    and multi-groom scenes. Log numerical stability alongside time and memory.
 
+Ongoing investigations (follower static/history storage, stage scheduling,
+workgroup topology and launch savings) are recorded under OPT-001, OPT-002,
+OPT-003, OPT-004 and OPT-009 in
+[the optimization backlog](OPTIMIZATION_BACKLOG.md).
+
 ## Immediate next implementation
 
 Adapt the original six stages' GPU data layouts, host resource ownership and

@@ -63,7 +63,12 @@ See the [engineering roadmap](docs/ROADMAP.md),
 [modernization research](docs/MODERNIZATION_RESEARCH.md),
 [bootstrap audit](docs/BOOTSTRAP_AUDIT.md), and
 [reference audit](docs/TRESSFX_REFERENCE.md), and
-[simulation source/performance trace](docs/SIMULATION_EXECUTION_TRACE.md).
+[simulation source/performance trace](docs/SIMULATION_EXECUTION_TRACE.md), and
+[optimization backlog](docs/OPTIMIZATION_BACKLOG.md).
+
+Contributors and coding agents should follow [AGENTS.md](AGENTS.md),
+including its required record of performance findings and deferred
+optimization work at each substantive handoff.
 
 ## Licensing
 
