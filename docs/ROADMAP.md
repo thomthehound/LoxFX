@@ -94,17 +94,18 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ### M1 — First complete strand simulation
 
-**GPU stages 1–4:** Integration/global shape, strand-level motion,
-velocity-shock propagation, and local-shape constraints execute as internal
-native Vulkan and D3D12 compute passes. PRs #15 and #16 established translated attachments, compact proximal
+**GPU stages 1–4, plus length/wind:** Integration/global shape, strand-level
+motion, velocity-shock propagation, local shape, and the length/wind portions
+of stage five execute as internal native Vulkan and D3D12 compute passes. PRs #15 and #16 established translated attachments, compact proximal
 history, and the per-guide motion data. Stage three propagates that motion
 to distal guide vertices; stage four preserves local curvature and implements
 the intended short/64-vertex iteration counts. Full bone-space attachments,
-length/wind/collision and follower publication are still required.
+body/contact collision, tangent completion and follower publication are still required.
 See [animated-root stage](ROOT_MOTION_STAGE.md),
 [strand-level motion](STRAND_MOTION_STAGE.md),
 [velocity-shock stage](VELOCITY_SHOCK_STAGE.md), and
-[local-shape stage](LOCAL_SHAPE_STAGE.md).
+[local-shape stage](LOCAL_SHAPE_STAGE.md) and
+[length/wind stage](LENGTH_WIND_STAGE.md).
 
 **Architecture milestone:** PR #11 merged the shared-device and command-
 recording proof. PR #14 adds native D3D12 stage-one execution against

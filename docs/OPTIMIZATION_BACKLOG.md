@@ -53,7 +53,10 @@ equivalence on real assets. Keep any required follower render output.
 
 **Issue:** [#4](https://github.com/thomthehound/LoxFX/issues/4).
 **Prerequisite:** first GPU storage/binding implementation.
-**Status:** blocked. **Source:** [PR #3](https://github.com/thomthehound/LoxFX/pull/3).
+**Status:** implemented-awaiting-measurement for guide-only GPU rest-length
+storage; other static follower-buffer consumers remain blocked pending
+full-simulation and rendering work. **Source:** [PR #3](https://github.com/thomthehound/LoxFX/pull/3)
+and [length/wind stage](LENGTH_WIND_STAGE.md).
 
 **Evidence / source:** `src/prepared_groom.cpp`; six master-index shaders and follower expansion in the TressFX 4.1 reference; [PR #3](https://github.com/thomthehound/LoxFX/pull/3).
 **Acceptance:** same authored/style/pinning behavior, collision and renderer compatibility, with measured lower static GPU residency or transfer cost and no unacceptable frame-time increase. Compare representative 0/1/3-follower assets.
