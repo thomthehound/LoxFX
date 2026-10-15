@@ -47,6 +47,9 @@ jobs:
           grep -qF 'Vertices per strand: 8' <<< "$short"
           grep -qF 'Planned thread lanes: 1321600' <<< "$short"
           grep -qF 'Reference-launched thread lanes: 2643200' <<< "$short"
+          ./build/loxfx_tfx_inspect "$RUNNER_TEMP/Ratboy_mohawk.tfx" --prepare
+          ./build/loxfx_tfx_inspect "$RUNNER_TEMP/Ratboy_mohawk.tfx" 3 --prepare
+          ./build/loxfx_tfx_inspect "$RUNNER_TEMP/Ratboy_short.tfx" 1 --prepare
       - name: Install
         run: cmake --install build --config Release --prefix "${{ github.workspace }}/build/package"
       - name: Configure downstream consumer

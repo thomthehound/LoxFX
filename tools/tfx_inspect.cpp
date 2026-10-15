@@ -3,6 +3,7 @@
 
 #include "loxfx/groom.h"
 #include "loxfx/simulation_work.h"
+#include "loxfx/prepared_groom.h"
 
 #include <charconv>
 #include <cstdint>
@@ -13,18 +14,34 @@
 #include <vector>
 
 int main(int argc, char** argv) {
-    if (argc != 2 && argc != 3) {
-        std::cerr << "Usage: loxfx_tfx_inspect <asset.tfx> [followers-per-guide]\n";
+    if (argc < 2 || argc > 4) {
+        std::cerr << "Usage: loxfx_tfx_inspect <asset.tfx> [followers-per-guide] [--prepare]\n";
         return 2;
     }
+    bool prepare = false;
+    bool has_follower_count = false;
     std::uint32_t followers = 0;
-    if (argc == 3) {
-        const std::string_view input{argv[2]};
-        const auto [end, ec] = std::from_chars(input.data(), input.data() + input.size(), followers);
+    for (int arg = 2; arg < argc; ++arg) {
+        const std::string_view input{argv[arg]};
+        if (input == "--prepare") {
+            if (prepare) {
+                std::cerr << "Duplicate --prepare option\n";
+                return 2;
+            }
+            prepare = true;
+            continue;
+        }
+        if (has_follower_count) {
+            std::cerr << "Only one follower count may be supplied\n";
+            return 2;
+        }
+        const auto [end, ec] = std::from_chars(
+            input.data(), input.data() + input.size(), followers);
         if (ec != std::errc{} || end != input.data() + input.size()) {
             std::cerr << "Follower count must be a nonnegative integer\n";
             return 2;
         }
+        has_follower_count = true;
     }
     std::ifstream input(argv[1], std::ios::binary);
     if (!input) {
@@ -61,5 +78,20 @@ int main(int argc, char** argv) {
               << "Prepared total strands: " << work->packed_total_strands << "\n"
               << "Planned thread lanes: " << work->planned_lane_invocations << "\n"
               << "Reference-launched thread lanes: " << work->reference_lane_invocations << "\n";
+    if (prepare) {
+        const auto prepared = loxfx::prepare_groom(groom, {
+            .followers_per_guide = followers,
+            .local_shape_iterations = 2,
+            .follower_root_radius = 0.005f,
+            .follower_tip_separation = 0.25f
+        });
+        if (!prepared) {
+            std::cerr << "Cannot prepare groom: " << prepared.error() << "\n";
+            return 1;
+        }
+        std::cout << "Prepared position vertices: " << prepared->rest_positions.size() << "\n"
+                  << "Prepared rest lengths: " << prepared->rest_segment_lengths.size() << "\n"
+                  << "Static GPU upload bytes: " << prepared->static_buffer_bytes() << "\n";
+    }
     return 0;
 }
