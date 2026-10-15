@@ -35,6 +35,18 @@ important decisions across sessions.
 - Do not mandate research-grade techniques or exotic accelerator features
   without demonstrated quality/performance improvements.
 
+## Pre-merge self-review (required even without Codex)
+
+Do not treat automated review or green CI as a substitute for examining the
+current PR *head* and the changed code in context. Use the
+[review protocol](docs/REVIEW_PROTOCOL.md), recording a short evidence table
+for every substantial PR. Review architecture before individual defects,
+then correctness/failure paths, cross-backend compatibility, performance
+hot paths and installed-SDK boundaries. Verify the latest CI SHA and any
+unresolved review comments; intentionally leave work draft if a
+merge-blocking concern remains. Code review is a responsibility of the
+maintainer/agent, not dependent on external reviewer credits.
+
 ## Required optimization-discovery and handoff practice
 
 1. **Capture at discovery.** Whenever you notice avoidable copies, follower
