@@ -82,6 +82,7 @@ struct IntegrationRuntime::Impl {
     bool timestamp_supported = false;
     std::uint32_t timestamp_valid_bits = 0;
     double last_gpu_ms = -1.0;
+    VkDeviceSize max_allocation_size = 0;
 
     Buffer current, previous, rest, staging;
     VkDescriptorSetLayout descriptor_layout = VK_NULL_HANDLE;
@@ -115,12 +116,16 @@ struct IntegrationRuntime::Impl {
         if (instance) vkDestroyInstance(instance, nullptr);
     }
 
-    std::uint32_t memory_index(std::uint32_t bits, VkMemoryPropertyFlags requested) const {
+    // Device memory allocation capacity is distinct from shader descriptor
+    // range size and compute dispatch limits.
+    std::uint32_t memory_index(std::uint32_t bits, VkMemoryPropertyFlags requested,
+                               VkDeviceSize allocation_size) const {
         VkPhysicalDeviceMemoryProperties properties{};
         vkGetPhysicalDeviceMemoryProperties(physical, &properties);
         for (std::uint32_t i = 0; i < properties.memoryTypeCount; ++i)
             if ((bits & (1u << i)) &&
-                (properties.memoryTypes[i].propertyFlags & requested) == requested)
+                (properties.memoryTypes[i].propertyFlags & requested) == requested &&
+                properties.memoryHeaps[properties.memoryTypes[i].heapIndex].size >= allocation_size)
                 return i;
         throw std::runtime_error("required Vulkan buffer memory type unavailable");
     }
@@ -136,8 +141,11 @@ struct IntegrationRuntime::Impl {
         VkMemoryRequirements requirements{};
         vkGetBufferMemoryRequirements(device, result.buffer, &requirements);
         VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        if (requirements.size > max_allocation_size)
+            throw std::runtime_error("buffer exceeds maxMemoryAllocationSize");
         alloc.allocationSize = requirements.size;
-        alloc.memoryTypeIndex = memory_index(requirements.memoryTypeBits, memory_flags);
+        alloc.memoryTypeIndex =
+            memory_index(requirements.memoryTypeBits, memory_flags, requirements.size);
         vk_check(vkAllocateMemory(device, &alloc, nullptr, &result.memory), "allocate buffer");
         result.allocation_bytes = alloc.allocationSize;
         vk_check(vkBindBufferMemory(device, result.buffer, result.memory, 0), "bind buffer");
@@ -170,6 +178,29 @@ struct IntegrationRuntime::Impl {
                              &barrier_info, 0, nullptr, 0, nullptr);
     }
 
+    // Called ONLY while probing an adapter, before pipelines/descriptors/
+    // commands have been created. Preserve no partially allocated buffers.
+    void discard_device_attempt() noexcept {
+        if (device != VK_NULL_HANDLE) {
+            for (Buffer* b : {&current, &previous, &rest, &staging}) {
+                if (b->buffer) vkDestroyBuffer(device, b->buffer, nullptr);
+                if (b->memory) vkFreeMemory(device, b->memory, nullptr);
+                *b = {};
+            }
+            vkDestroyDevice(device, nullptr);
+        }
+        device = VK_NULL_HANDLE;
+        physical = VK_NULL_HANDLE;
+        queue = VK_NULL_HANDLE;
+        family = 0;
+        device_name.clear();
+        software = false;
+        timestamp_supported = false;
+        timestamp_valid_bits = 0;
+        timestamp_period = 0;
+        max_allocation_size = 0;
+    }
+
     void create_device() {
         VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
         app.pApplicationName = "LoxFX stage-one smoke";
@@ -184,9 +215,10 @@ struct IntegrationRuntime::Impl {
         std::vector<VkPhysicalDevice> devices(count);
         vk_check(vkEnumeratePhysicalDevices(instance, &count, devices.data()),
                  "enumerate physical devices");
-        // Select by groom capabilities, then device tier. Otherwise the
-        // first enumerated GPU could reject a groom supported by a later GPU.
-        // Enumerate only once, at creation; never in the dispatch hot path.
+
+        // Both memory eligibility and actual allocations must succeed before
+        // committing to a device. maxStorageBufferRange only constrains a
+        // descriptor; it does NOT guarantee memory can be allocated.
         const auto device_tier = [](VkPhysicalDeviceType type) {
             switch (type) {
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 0;
@@ -196,15 +228,22 @@ struct IntegrationRuntime::Impl {
             default: return 3;
             }
         };
-        for (int tier = 0; tier < 5 && !physical; ++tier) {
+        std::string last_failure;
+        for (int tier = 0; tier < 5; ++tier) {
             for (VkPhysicalDevice candidate : devices) {
-                VkPhysicalDeviceProperties props{};
-                vkGetPhysicalDeviceProperties(candidate, &props);
+                VkPhysicalDeviceMaintenance3Properties maintenance{
+                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES};
+                VkPhysicalDeviceProperties2 extended{
+                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+                extended.pNext = &maintenance;
+                vkGetPhysicalDeviceProperties2(candidate, &extended);
+                const VkPhysicalDeviceProperties& props = extended.properties;
                 if (device_tier(props.deviceType) != tier ||
                     props.apiVersion < VK_API_VERSION_1_2)
                     continue;
                 const VkPhysicalDeviceLimits& lim = props.limits;
                 if (vertex_bytes > lim.maxStorageBufferRange ||
+                    vertex_bytes > maintenance.maxMemoryAllocationSize ||
                     groups > lim.maxComputeWorkGroupCount[0] ||
                     lim.maxComputeWorkGroupSize[0] < 64 ||
                     lim.maxComputeWorkGroupInvocations < 64 ||
@@ -218,35 +257,63 @@ struct IntegrationRuntime::Impl {
                 std::vector<VkQueueFamilyProperties> queue_props(families);
                 vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, queue_props.data());
                 for (std::uint32_t i = 0; i < families; ++i) {
-                    if (queue_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
-                        physical = candidate;
-                        family = i;
-                        device_name = props.deviceName;
-                        software = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
-                        timestamp_valid_bits = queue_props[i].timestampValidBits;
-                        timestamp_supported = timestamp_valid_bits != 0;
-                        timestamp_period = props.limits.timestampPeriod;
-                        break;
+                    if ((queue_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0)
+                        continue;
+                    physical = candidate;
+                    family = i;
+                    device_name = props.deviceName;
+                    software = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+                    timestamp_valid_bits = queue_props[i].timestampValidBits;
+                    timestamp_supported = timestamp_valid_bits != 0;
+                    timestamp_period = lim.timestampPeriod;
+                    max_allocation_size = maintenance.maxMemoryAllocationSize;
+
+                    try {
+                        const float priority = 1.0f;
+                        VkDeviceQueueCreateInfo queue_create{
+                            VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+                        queue_create.queueFamilyIndex = family;
+                        queue_create.queueCount = 1;
+                        queue_create.pQueuePriorities = &priority;
+                        VkDeviceCreateInfo device_create{
+                            VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+                        device_create.queueCreateInfoCount = 1;
+                        device_create.pQueueCreateInfos = &queue_create;
+                        vk_check(vkCreateDevice(physical, &device_create, nullptr, &device),
+                                 "create Vulkan device");
+                        vkGetDeviceQueue(device, family, 0, &queue);
+
+                        // Probe the actual allocation requirements, compatible
+                        // memory types, and driver availability. If any of these
+                        // fail, destroy all four buffers/device and try another.
+                        allocate(current, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                        allocate(previous, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                        allocate(rest, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                        allocate(staging, vertex_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                        return;
+                    } catch (const std::runtime_error& e) {
+                        last_failure = std::string(props.deviceName) + ": " + e.what();
+                        discard_device_attempt();
                     }
+                    // Alternate queue families of the same physical device
+                    // share the memory heaps. Try the next device.
+                    break;
                 }
-                if (physical) break;
             }
         }
-        if (!physical)
-            throw std::runtime_error(
-                "no Vulkan 1.2+ compute device supports the groom's buffer, "
-                "dispatch, descriptor and shader limits");
-        const float priority = 1.0f;
-        VkDeviceQueueCreateInfo queue_create{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-        queue_create.queueFamilyIndex = family;
-        queue_create.queueCount = 1;
-        queue_create.pQueuePriorities = &priority;
-        VkDeviceCreateInfo device_create{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-        device_create.queueCreateInfoCount = 1;
-        device_create.pQueueCreateInfos = &queue_create;
-        vk_check(vkCreateDevice(physical, &device_create, nullptr, &device),
-                 "create Vulkan device");
-        vkGetDeviceQueue(device, family, 0, &queue);
+        throw std::runtime_error(
+            "no Vulkan compute device can allocate the requested groom buffers" +
+            (last_failure.empty() ? std::string{} : ": " + last_failure));
     }
 
     void init(const PreparedGroom& groom, const std::filesystem::path& spirv_path) {
@@ -293,20 +360,6 @@ struct IntegrationRuntime::Impl {
             throw std::invalid_argument("prepared groom exceeds supported storage size");
 
         create_device();
-        allocate(current, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        allocate(previous, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        allocate(rest, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        // One staging image is sufficient: all three device buffers begin
-        // with identical rest positions. No threefold host-side replication.
-        allocate(staging, vertex_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
         for (std::uint32_t i = 0; i < 3; ++i) {
