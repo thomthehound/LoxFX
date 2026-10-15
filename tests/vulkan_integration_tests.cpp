@@ -237,6 +237,7 @@ int main(int argc,char** argv) {
         const auto history_before=context.diagnostic_read_root_history(first);
         check(history_before.size()==a->work.packed_guide_strands*2,
               "compact root history has exactly two vertices per padded guide");
+        std::vector<loxfx::Float4> positions_after_first_motion;
         for(float translation : {0.5f,0.9f,1.2f}) {
             const auto motion=context.begin_diagnostic_commands();
             context.record_integration(motion,first,
@@ -244,6 +245,7 @@ int main(int argc,char** argv) {
                  .root_translation_x=translation},1);
             context.submit_diagnostic_and_wait();
             const auto current=context.diagnostic_read_positions(first);
+            if (translation==0.5f) positions_after_first_motion=current;
             check(std::abs(current[0].x-translation)<0.0001f,
                   "root follows host attachment offset");
             check(current[4].x==0.0f,
@@ -252,6 +254,8 @@ int main(int argc,char** argv) {
         const auto root_history=context.diagnostic_read_root_history(first);
         check(std::abs(root_history[0].x-0.5f)<0.0001f,
               "previous-previous root tracks the older attachment frame");
+        check(std::abs(root_history[1].y-positions_after_first_motion[1].y)<0.0001f,
+              "second root vertex stores prior-prior dynamic guide position");
         const auto separate=context.diagnostic_read_positions(second);
         check(separate[0].y==5.0f,
               "moving one groom cannot modify another groom's roots");

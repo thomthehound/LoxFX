@@ -246,6 +246,7 @@ int main(int argc,char** argv) {
         const auto history_before=context.diagnostic_read_root_history(g1);
         require(history_before.size()==first->work.packed_guide_strands*2,
                 "compact root history allocation");
+        std::vector<loxfx::Float4> positions_after_first_motion;
         for(float translation : {0.5f,0.9f,1.2f}) {
             auto* motion=context.begin_diagnostic_commands();
             context.record_integration(motion,g1,
@@ -253,6 +254,7 @@ int main(int argc,char** argv) {
                  .root_translation_x=translation},1);
             context.submit_diagnostic_and_wait();
             const auto current=context.diagnostic_read_positions(g1);
+            if (translation==0.5f) positions_after_first_motion=current;
             require(std::abs(current[0].x-translation)<0.0001f,
                     "D3D12 root follows host attachment offset");
             require(current[4].x==0.0f,
@@ -261,6 +263,8 @@ int main(int argc,char** argv) {
         const auto root_history=context.diagnostic_read_root_history(g1);
         require(std::abs(root_history[0].x-0.5f)<0.0001f,
                 "D3D12 previous-previous roots match Vulkan history");
+        require(std::abs(root_history[1].y-positions_after_first_motion[1].y)<0.0001f,
+                "D3D12 dynamic second-root history matches older simulation state");
         require(context.diagnostic_read_positions(g2)[0].y==5.0f,
                 "D3D12 other groom roots stay independent");
 
