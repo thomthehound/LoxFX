@@ -36,7 +36,8 @@ func _run() -> void:
     })
     scene.godauldron_step(1.0 / 60.0)
     details = scene.godauldron_capture_metadata()
-    if not bool(details.get("running", false))             or int(details.get("simulated_steps", 0)) != 1:
+    if (not bool(details.get("running", false))
+            or int(details.get("simulated_steps", 0)) != 1):
         _fail("LoxFX's Godauldron scene did not execute native GPU hair: " +
             String(details.get("error", "")))
         return
