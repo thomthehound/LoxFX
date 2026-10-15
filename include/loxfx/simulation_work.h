@@ -41,6 +41,9 @@ struct SimulationWorkPlan {
     std::uint32_t packed_guide_strands;
     std::uint32_t packed_total_strands;
     std::uint32_t packed_total_vertices;
+    // When 64 vertices occupy a strand, a single lane can perform all local
+    // iterations; short strands use separate host dispatches instead.
+    std::uint32_t shader_local_shape_iterations;
     std::array<SimulationDispatch, 6> stages;
     std::uint64_t planned_lane_invocations;
     std::uint64_t reference_lane_invocations;

@@ -52,13 +52,18 @@ Consequently the shader threads for each stage represent *guides*, while
 the host launches using guides **plus followers**.
 
 For three followers/guide and 64 prepared guides of 16 vertices:
-- Packed resource capacity: 256 strands × 16 = 4,096 vertices.
+- LoxFX packed resource capacity: 256 strands × 16 = 4,096 vertices.
 - Correct master-index vertex dispatch: 1,024 lanes = 16 groups.
-- Legacy vertex dispatch: 4,096 lanes = 64 groups.
 - Correct master-index strand dispatch: 64 lanes = 1 group.
-- Legacy strand dispatch: 256 lanes = 4 groups.
+- **Legacy loader** pads 64 authored guides to **128**, even though the
+  count was already aligned. With three followers this becomes 512 strands
+  and 8,192 vertices.
+- Legacy vertex dispatch: 8,192 lanes = 128 groups.
+- Legacy strand dispatch: 512 lanes = 8 groups.
 - Four per-vertex stages, two strand stages, and two local-shape iterations
-  lead to 4,288 intended master-guide lanes vs. 17,152 reference-launched lanes.
+  lead to 4,288 intended master-guide lanes vs. 34,304 reference-launched
+  lanes. In this particular exactly aligned case, the difference is **8×**
+  in logical lanes due to both independent inefficiencies.
 
 The Linux reference-asset smoke test also confirmed the real, AMD-authored
 Ratboy groom metadata: the mohawk contains 2,228 guides × 32 vertices and the
@@ -68,8 +73,10 @@ counts are 293,440 and 1,321,600 lanes, compared with 1,173,760 and
 2,643,200 in the original host's total-strand launch formula. The assets
 are downloaded only by CI and are not distributed in the LoxFX source tree.
 
-That is **4× the thread lanes**, NOT evidence of a 4× performance slowdown
-or a 4× runtime speedup after correcting it. The extra groups may also index
+With non-aligned authored guide counts, the extra padding-block effect
+disappears, giving **4×** reference lane counts with three followers/guide.
+These are analytical launch counts, **not evidence** of a 4× or 8×
+performance slowdown, or a proportional runtime speedup after correction. The extra groups may also index
 past valid master-strand data: their shader-side index calculation treats
 already-expanded counts as guide counts, and does not show a guard for the
 end of actual guide storage. This needs a real reference run to establish
@@ -81,6 +88,21 @@ calculates all six guide-only group counts once during preparation/LOD changes.
 It never queries GPU features or performs per-dispatch count division.
 It is a necessary execution contract, **not** a simulation, driver interface
 or automatic speedup.
+
+## 64-vertex local-shape iterations and a source discrepancy
+
+The reference host selects one local-shape dispatch for strands with 64
+vertices and uses repeated host dispatches for shorter strands. It writes
+the requested iteration count to the constant buffer on the 64-vertex path,
+but the released `LocalShapeConstraints` shader does **not** read this
+iteration count or loop its body: the requested additional local iterations
+are therefore not implemented in the original 64-vertex shader.
+
+LoxFX's work plan models the more efficient, intended execution:
+one host dispatch for 64-vertex strands with a shader-internal iteration
+budget, and repeated host dispatches for shorter strands. The actual shader
+port must *implement* the internal loop and test its physical behavior
+before claiming this intended semantics is functioning.
 
 ## Outstanding synchronization concern
 

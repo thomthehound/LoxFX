@@ -27,7 +27,8 @@ void guide_vs_follow() {
     expect(plan->stages[4].thread_groups == 16, "wind/length groups");
     expect(plan->stages[5].thread_groups == 16, "follower output guide threads");
     expect(plan->planned_lane_invocations == 4288, "guide lane accounting");
-    expect(plan->reference_lane_invocations == 17152, "legacy lane accounting");
+    expect(plan->reference_lane_invocations == 34304,
+           "legacy work includes extra block on exact 64-guide boundary");
 }
 
 void padding() {
@@ -41,8 +42,12 @@ void padding() {
         expect(after->packed_guide_strands == 128, "65 rounds to 128");
         expect(exact->stages[0].thread_groups == vertices, "guide vertices / 64");
         expect(exact->stages[1].thread_groups == 1, "guide strands / 64");
-        expect(exact->planned_lane_invocations == exact->reference_lane_invocations,
-               "zero followers is source work count");
+        expect(before->planned_lane_invocations == before->reference_lane_invocations,
+               "unaligned 63 guides, no followers");
+        expect(exact->reference_lane_invocations == 2 * exact->planned_lane_invocations,
+               "reference loader adds 64 extra strands at exact boundary");
+        expect(after->planned_lane_invocations == after->reference_lane_invocations,
+               "unaligned 65 guides, no followers");
     }
 }
 
@@ -53,7 +58,13 @@ void iteration_and_error_bounds() {
            "no followers still no wasted follower dispatch");
 
     auto many = loxfx::make_simulation_work_plan({64, 8, 1, 20});
-    expect(many && many->stages[3].iterations == 20, "iteration budget retained");
+    expect(many && many->stages[3].iterations == 20, "short strands use host iterations");
+    expect(many->shader_local_shape_iterations == 1, "short strands use one shader iteration");
+    auto long_strands = loxfx::make_simulation_work_plan({64, 64, 1, 20});
+    expect(long_strands && long_strands->stages[3].iterations == 1,
+           "64-vertex strands use one host dispatch");
+    expect(long_strands->shader_local_shape_iterations == 20,
+           "64-vertex shader is assigned the requested internal iterations");
     expect(!loxfx::make_simulation_work_plan({0, 4, 0, 1}), "zero guides");
     expect(!loxfx::make_simulation_work_plan({64, 3, 0, 1}), "invalid vertex topology");
     expect(!loxfx::make_simulation_work_plan({64, 128, 0, 1}), "non-reference vertex topology");

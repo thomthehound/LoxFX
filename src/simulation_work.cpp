@@ -50,6 +50,21 @@ make_simulation_work_plan(const SimulationShape& shape) {
         total_vertices > u32_max)
         return std::unexpected("packed simulation exceeds 32-bit strand/vertex indexing");
 
+    // TressFX 4.1's reference loader always appends one extra 64-guide block
+    // for exact multiples. Preserve that bug in *reference accounting only*.
+    const std::uint64_t legacy_guides =
+        padded + (shape.authored_guide_strands % group_size == 0 ? group_size : 0);
+    std::uint64_t legacy_strands = 0, legacy_vertices = 0;
+    if (!mul_u64(legacy_guides, multiplier, legacy_strands) ||
+        !mul_u64(legacy_strands, shape.vertices_per_strand, legacy_vertices))
+        return std::unexpected("reference workload accounting overflow");
+
+    const std::uint32_t host_local_iterations =
+        shape.vertices_per_strand == 64 && shape.local_shape_iterations > 0
+        ? 1 : shape.local_shape_iterations;
+    const std::uint32_t shader_local_iterations =
+        shape.vertices_per_strand == 64 ? shape.local_shape_iterations : 1;
+
     const std::uint64_t guide_vertices = padded * shape.vertices_per_strand;
     const std::uint64_t vertex_groups = guide_vertices / group_size;
     const std::uint64_t strand_groups = padded / group_size;
@@ -58,11 +73,12 @@ make_simulation_work_plan(const SimulationShape& shape) {
         static_cast<std::uint32_t>(padded),
         static_cast<std::uint32_t>(total_strands),
         static_cast<std::uint32_t>(total_vertices),
+        shader_local_iterations,
         {{
             {SimulationStage::integration_and_global_shape, static_cast<std::uint32_t>(vertex_groups), 1},
             {SimulationStage::calculate_strand_level_data, static_cast<std::uint32_t>(strand_groups), 1},
             {SimulationStage::velocity_shock_propagation, static_cast<std::uint32_t>(vertex_groups), 1},
-            {SimulationStage::local_shape_constraints, static_cast<std::uint32_t>(strand_groups), shape.local_shape_iterations},
+            {SimulationStage::local_shape_constraints, static_cast<std::uint32_t>(strand_groups), host_local_iterations},
             {SimulationStage::length_wind_and_collision, static_cast<std::uint32_t>(vertex_groups), 1},
             {SimulationStage::update_follow_vertices, static_cast<std::uint32_t>(vertex_groups), 1}
         }},
@@ -80,12 +96,18 @@ make_simulation_work_plan(const SimulationShape& shape) {
             return std::unexpected("planned dispatch count overflow");
         plan.planned_lane_invocations = count;
 
+        const bool strand_stage =
+            stage.stage == SimulationStage::calculate_strand_level_data ||
+            stage.stage == SimulationStage::local_shape_constraints;
         const std::uint64_t legacy_groups =
-            (stage.stage == SimulationStage::calculate_strand_level_data ||
-             stage.stage == SimulationStage::local_shape_constraints)
-            ? total_strands / group_size
-            : total_vertices / group_size;
-        if (!mul_u64(legacy_groups * group_size, stage.iterations, reference_lanes) ||
+            (strand_stage ? legacy_strands : legacy_vertices) / group_size;
+        // At 64 vertices the original host dispatches local shape once,
+        // regardless of the requested count. The original shader ignores
+        // its local-iteration uniform, a separate correctness concern.
+        const std::uint32_t reference_iterations =
+            (stage.stage == SimulationStage::local_shape_constraints &&
+             shape.vertices_per_strand == 64) ? 1 : stage.iterations;
+        if (!mul_u64(legacy_groups * group_size, reference_iterations, reference_lanes) ||
             !add_u64(plan.reference_lane_invocations, reference_lanes, count))
             return std::unexpected("reference dispatch count overflow");
         plan.reference_lane_invocations = count;
