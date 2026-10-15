@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 void check(bool value, const char* what) {
@@ -114,6 +115,33 @@ int main(int argc,char** argv) {
                "invalid rest positions were accepted");
 
         constexpr float dt=1.0f/60.0f, gravity=9.81f;
+        // Fault-inject every resource-creation checkpoint used by groom
+        // initialization. Failed construction must release buffers/pools,
+        // leave the shared device functional, and never submit partial work.
+        const auto before_faults=context.gpu_submission_count();
+        for (int point=0; point<15; ++point) {
+            bool caught=false;
+            gpu::diagnostic_fail_creation_after(point);
+            try {
+                auto invalid_groom=context.prepare(*a);
+                (void)invalid_groom;
+            } catch (const std::runtime_error& failure) {
+                caught=std::string_view(failure.what()).find(
+                    "injected Vulkan resource creation failure")!=std::string_view::npos;
+            }
+            gpu::diagnostic_fail_creation_after(-1);
+            check(caught,"fault injection did not cover a groom allocation stage");
+        }
+        check(context.gpu_submission_count()==before_faults,
+              "failed groom creations did not submit partial GPU commands");
+        {
+            auto recovered=context.prepare(*a);
+            check(recovered.allocated_buffer_bytes()>0,
+                  "shared device recovered after injection series");
+            const auto data=context.diagnostic_read_positions(recovered);
+            check(data[1].y==1.0f, "recovered groom upload correct");
+        }
+
         const auto prior_submissions=context.gpu_submission_count();
         const VkCommandBuffer command=context.begin_diagnostic_commands();
         context.record_integration(command,first,

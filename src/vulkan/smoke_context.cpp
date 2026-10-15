@@ -13,6 +13,21 @@
 
 namespace loxfx::vulkan::smoke {
 namespace {
+thread_local int creation_failure_countdown = -1;
+void creation_checkpoint() {
+    if (creation_failure_countdown < 0) return;
+    if (creation_failure_countdown-- == 0) {
+        creation_failure_countdown = -1;
+        throw std::runtime_error("injected Vulkan resource creation failure");
+    }
+}
+} // namespace
+
+void diagnostic_fail_creation_after(int checkpoints) noexcept {
+    creation_failure_countdown = checkpoints;
+}
+
+namespace {
 void verify(VkResult rc, const char* operation) {
     if (rc != VK_SUCCESS)
         throw std::runtime_error(std::string(operation) + " (VkResult " +
@@ -76,6 +91,7 @@ struct Buffer {
         ci.usage = usage;
         ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         VkBuffer created = VK_NULL_HANDLE;
+        creation_checkpoint();
         verify(vkCreateBuffer(logical, &ci, nullptr, &created), "create Vulkan buffer");
         handle = created; // Commit only a successfully created resource.
         VkMemoryRequirements req{};
@@ -103,10 +119,12 @@ struct Buffer {
             ai.allocationSize = req.size;
             ai.memoryTypeIndex = i;
             VkDeviceMemory allocation = VK_NULL_HANDLE;
+            creation_checkpoint();
             last = vkAllocateMemory(logical, &ai, nullptr, &allocation);
             if (last == VK_SUCCESS) {
                 memory = allocation;
                 allocation_bytes = req.size;
+                creation_checkpoint();
                 verify(vkBindBufferMemory(logical, handle, memory, 0),
                        "bind Vulkan buffer memory");
                 return;
@@ -460,6 +478,7 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     pool.poolSizeCount=1;
     pool.pPoolSizes=&size;
     VkDescriptorPool created_pool=VK_NULL_HANDLE;
+    creation_checkpoint();
     verify(vkCreateDescriptorPool(impl_->device,&pool,nullptr,&created_pool),
            "create groom descriptor pool");
     groom->descriptor_pool=created_pool;
@@ -468,6 +487,7 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     alloc.descriptorSetCount=1;
     alloc.pSetLayouts=&impl_->layout;
     VkDescriptorSet created_set=VK_NULL_HANDLE;
+    creation_checkpoint();
     verify(vkAllocateDescriptorSets(impl_->device,&alloc,&created_set),
            "create groom descriptor set");
     groom->set=created_set;
@@ -493,6 +513,7 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped=nullptr;
+    creation_checkpoint();
     verify(vkMapMemory(impl_->device,staging.memory,0,bytes,0,&mapped),
            "map initial upload");
     std::memcpy(mapped,source.rest_positions.data(),static_cast<std::size_t>(bytes));

@@ -14,6 +14,10 @@
 
 namespace loxfx::vulkan::smoke {
 
+// Internal smoke-test hook. Failure is injected just before an initialization
+// resource operation; -1 disables. Never active in frame-time recording.
+void diagnostic_fail_creation_after(int checkpoints) noexcept;
+
 // Borrowed handles: the host must keep its device/queue alive until all
 // dependent contexts and grooms have been destroyed. No implicit migration.
 struct ExternalDevice {
