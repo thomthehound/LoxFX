@@ -56,6 +56,10 @@ public:
     // Backend-native work recording: no queue submission, fence or CPU wait.
     // Applies strand-level VSP transforms to guide vertices 2+.
     // Caller records integration and strand-level calculation first.
+    // Guide-local shape correction, following strand motion and VSP.
+    // Stiffness is [0,1]; iterations come from the prepared work plan.
+    void record_local_shape(ID3D12GraphicsCommandList* command_list,
+                            const GroomState& groom, float stiffness) const;
     void record_velocity_shock(ID3D12GraphicsCommandList* command_list,
                                const GroomState& groom) const;
     void record_strand_level(ID3D12GraphicsCommandList* command_list,

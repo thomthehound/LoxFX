@@ -36,6 +36,10 @@ std::expected<SimulationWorkPlan, std::string>
 make_simulation_work_plan(const SimulationShape& shape) {
     if (shape.authored_guide_strands == 0 || !is_legal_vertex_count(shape.vertices_per_strand))
         return std::unexpected("invalid authored guides or vertices per strand");
+    // Bound the total serialized work before it reaches host command recording
+    // (short strands) or shader-internal iteration loops (64-vertex strands).
+    if (shape.local_shape_iterations > max_local_shape_iterations)
+        return std::unexpected("local shape iterations exceed supported limit");
 
     // 64-guide padding is needed by the unguarded source master-index kernels,
     // even when each workgroup processes only 64 / vertices_per_strand guides.
