@@ -77,6 +77,39 @@ void followers_and_repeatability() {
     check(prepared->source_guide_indices[255] == 0, "padded source id");
 }
 
+void validate_mutated_buffers() {
+    auto prepared = loxfx::prepare_groom(fixture());
+    check(prepared.has_value(), "prepared fixture for validator");
+    check(loxfx::validate_prepared_groom(*prepared).has_value(),
+          "valid prepared groom accepted");
+
+    auto changed = *prepared;
+    changed.work.packed_guide_strands += 64;
+    check(!loxfx::validate_prepared_groom(changed),
+          "reject mismatched padded guide count");
+    changed = *prepared;
+    changed.work.planned_lane_invocations += 64;
+    check(!loxfx::validate_prepared_groom(changed),
+          "reject altered dispatch accounting");
+    changed = *prepared;
+    changed.rest_tangents.pop_back();
+    check(!loxfx::validate_prepared_groom(changed),
+          "reject missing rest tangents");
+    changed = *prepared;
+    changed.rest_segment_lengths[0] = -1.0f;
+    check(!loxfx::validate_prepared_groom(changed),
+          "reject invalid rest segment length");
+    changed = *prepared;
+    changed.follower_root_offsets[0].x =
+        std::numeric_limits<float>::infinity();
+    check(!loxfx::validate_prepared_groom(changed),
+          "reject invalid follower offset");
+    changed = *prepared;
+    changed.source_guide_indices[0] = changed.authored_guide_strands;
+    check(!loxfx::validate_prepared_groom(changed),
+          "reject out-of-range source guide index");
+}
+
 void invalid_inputs() {
     auto source = fixture();
     source.positions.pop_back();
@@ -103,6 +136,7 @@ int main() {
         no_followers();
         followers_and_repeatability();
         invalid_inputs();
+        validate_mutated_buffers();
         std::cout << "Prepared groom tests passed\n";
     } catch (const std::exception& e) {
         std::cerr << e.what() << "\n";

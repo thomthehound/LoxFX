@@ -144,28 +144,9 @@ void memory_barrier(VkCommandBuffer command, VkPipelineStageFlags src,
     barrier.dstAccessMask = to;
     vkCmdPipelineBarrier(command, src, dst, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
-void check_groom(const PreparedGroom& g) {
-    const std::uint32_t iterations = g.vertices_per_strand == 64
-        ? g.work.shader_local_shape_iterations : g.work.stages[3].iterations;
-    const auto p = make_simulation_work_plan({
-        g.authored_guide_strands, g.vertices_per_strand,
-        g.followers_per_guide, iterations});
-    if (!p || g.work.packed_total_vertices != p->packed_total_vertices ||
-        g.work.packed_total_strands != p->packed_total_strands ||
-        g.work.packed_guide_strands != p->packed_guide_strands ||
-        g.work.stages.size() != p->stages.size() ||
-        g.rest_positions.size() != p->packed_total_vertices)
-        throw std::invalid_argument("prepared groom does not match source topology");
-    for (std::size_t i = 0; i < p->stages.size(); ++i) {
-        if (g.work.stages[i].stage != p->stages[i].stage ||
-            g.work.stages[i].thread_groups != p->stages[i].thread_groups ||
-            g.work.stages[i].iterations != p->stages[i].iterations)
-            throw std::invalid_argument("prepared groom has invalid dispatch stages");
-    }
-    for (const Float4& v : g.rest_positions)
-        if (!std::isfinite(v.x) || !std::isfinite(v.y) ||
-            !std::isfinite(v.z) || !std::isfinite(v.w))
-            throw std::invalid_argument("nonfinite prepared groom position");
+void check_groom(const PreparedGroom& groom) {
+    const auto result = validate_prepared_groom(groom);
+    if (!result) throw std::invalid_argument(result.error());
 }
 } // namespace
 

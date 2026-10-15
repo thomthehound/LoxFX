@@ -60,4 +60,9 @@ struct PreparedGroom {
 std::expected<PreparedGroom, std::string>
 prepare_groom(const GroomAsset& asset, const GroomPreparation& options = {});
 
+// Public PreparedGroom is mutable. Validate once at an execution/serialization
+// boundary, rather than assuming that every caller used prepare_groom().
+// Shared by all backends; no native GPU types or per-frame validation.
+std::expected<void, std::string> validate_prepared_groom(const PreparedGroom& groom);
+
 } // namespace loxfx
