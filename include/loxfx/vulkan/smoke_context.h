@@ -37,6 +37,10 @@ public:
     GroomState(const GroomState&) = delete;
     GroomState& operator=(const GroomState&) = delete;
     [[nodiscard]] std::uint64_t allocated_buffer_bytes() const noexcept;
+    // Borrowed resource handles for a host renderer; no ownership transfer.
+    // Synchronization and compute-to-graphics visibility remain host-owned.
+    [[nodiscard]] VkBuffer positions_buffer() const noexcept;
+    [[nodiscard]] VkBuffer tangents_buffer() const noexcept;
 private:
     friend class DeviceContext;
     struct Impl;
