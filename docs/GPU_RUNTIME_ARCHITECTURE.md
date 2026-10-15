@@ -136,9 +136,9 @@ ad hoc failed-resource cleanup; per-groom invariant pipelines and
 unconditionally persistent upload staging.
 
 **Sequence:**
-1. Reduce PR #11 to an explicitly experimental shader/compute smoke-test
-   harness until the runtime contract is corrected. Preserve proof, do not
-   merge a misleading production-facing SDK API.
+1. **Implemented in draft PR:** retain shader/compute smoke tests while
+   excluding the prototype backend library and headers from installed
+   SDK exports. Do not merge a permanent per-groom runtime API.
 2. Establish explicit backend device context (owned standalone or
    borrowed from host), RAII and *two grooms on one device*. Fault-test
    failed resource creation with no invalid destruction.

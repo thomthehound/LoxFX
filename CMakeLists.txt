@@ -12,7 +12,7 @@ include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-option(LOXFX_ENABLE_VULKAN "Build the Vulkan integration stage and diagnostic runner" OFF)
+option(LOXFX_BUILD_VULKAN_SMOKE "Build experimental Vulkan compute smoke test" OFF)
 # DXIL compilation is independent of Vulkan: prove shared HLSL portability
 # before the native D3D12 runtime is implemented.
 option(LOXFX_ENABLE_D3D12_SHADERS "Compile the shared integration stage to DXIL" OFF)
@@ -60,7 +60,9 @@ install(TARGETS loxfx_core EXPORT LoxFXTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+# Prototype backend headers are not installed as public SDK APIs.
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  PATTERN "vulkan" EXCLUDE)
 install(EXPORT LoxFXTargets
   FILE LoxFXTargets.cmake
   NAMESPACE LoxFX::
@@ -78,11 +80,9 @@ install(FILES
   "${CMAKE_CURRENT_BINARY_DIR}/LoxFXConfigVersion.cmake"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/LoxFX")
 
-# First native Vulkan *simulation stage* (opt-in): compile HLSL with DXC.
-# CPU import/SDK builds do not require Vulkan or a shader compiler.
-# Option is declared above the generated package config so consumers
-# receive the correct find_dependency(Vulkan) contract.
-if(LOXFX_ENABLE_VULKAN)
+# Experimental compute proof: not an exported backend target.
+# CPU import/SDK builds do not require Vulkan or DXC.
+if(LOXFX_BUILD_VULKAN_SMOKE)
   find_package(Vulkan REQUIRED)
   find_program(LOXFX_DXC_EXECUTABLE NAMES dxc dxc.exe REQUIRED)
   set(LOXFX_INTEGRATION_SPV "${CMAKE_CURRENT_BINARY_DIR}/shaders/loxfx_integration.spv")
@@ -97,34 +97,26 @@ if(LOXFX_ENABLE_VULKAN)
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
     VERBATIM)
   add_custom_target(loxfx_integration_shader DEPENDS "${LOXFX_INTEGRATION_SPV}")
-  add_library(loxfx_vulkan STATIC src/vulkan/integration.cpp)
-  add_library(LoxFX::Vulkan ALIAS loxfx_vulkan)
-  add_dependencies(loxfx_vulkan loxfx_integration_shader)
-  target_link_libraries(loxfx_vulkan PUBLIC LoxFX::Core PRIVATE Vulkan::Vulkan)
-  target_compile_features(loxfx_vulkan PUBLIC cxx_std_23)
-  target_include_directories(loxfx_vulkan PUBLIC
+  add_library(loxfx_vulkan_smoke STATIC src/vulkan/integration.cpp)
+  add_dependencies(loxfx_vulkan_smoke loxfx_integration_shader)
+  target_link_libraries(loxfx_vulkan_smoke PUBLIC LoxFX::Core PRIVATE Vulkan::Vulkan)
+  target_compile_features(loxfx_vulkan_smoke PUBLIC cxx_std_23)
+  target_include_directories(loxfx_vulkan_smoke PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-  set_target_properties(loxfx_vulkan PROPERTIES
-    EXPORT_NAME Vulkan POSITION_INDEPENDENT_CODE ON)
+  set_target_properties(loxfx_vulkan_smoke PROPERTIES POSITION_INDEPENDENT_CODE ON)
   if(MSVC)
-    target_compile_options(loxfx_vulkan PRIVATE /W4)
+    target_compile_options(loxfx_vulkan_smoke PRIVATE /W4)
   else()
-    target_compile_options(loxfx_vulkan PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(loxfx_vulkan_smoke PRIVATE -Wall -Wextra -Wpedantic)
   endif()
-  # Vulkan is private because backend-specific types do not escape the
-  # public header. The linked Vulkan loader is still required at runtime.
-  install(TARGETS loxfx_vulkan EXPORT LoxFXTargets
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-  install(FILES "${LOXFX_INTEGRATION_SPV}" DESTINATION "${CMAKE_INSTALL_DATADIR}/loxfx/shaders")
+  # Neither prototype library nor its shader is installed or exported.
   if(BUILD_TESTING)
-    add_executable(loxfx_vulkan_integration_tests tests/vulkan_integration_tests.cpp)
-    target_link_libraries(loxfx_vulkan_integration_tests PRIVATE LoxFX::Vulkan)
-    add_dependencies(loxfx_vulkan_integration_tests loxfx_integration_shader)
-    add_test(NAME loxfx_vulkan_integration
-      COMMAND loxfx_vulkan_integration_tests "${LOXFX_INTEGRATION_SPV}")
+    add_executable(loxfx_vulkan_smoke_integration_tests tests/vulkan_integration_tests.cpp)
+    target_link_libraries(loxfx_vulkan_smoke_integration_tests PRIVATE loxfx_vulkan_smoke)
+    add_dependencies(loxfx_vulkan_smoke_integration_tests loxfx_integration_shader)
+    add_test(NAME loxfx_vulkan_smoke_integration
+      COMMAND loxfx_vulkan_smoke_integration_tests "${LOXFX_INTEGRATION_SPV}")
   endif()
 endif()
 

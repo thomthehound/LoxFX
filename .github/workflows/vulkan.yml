@@ -31,7 +31,7 @@ jobs:
           echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$RUNNER_TEMP/dxc/lib" >> "$GITHUB_ENV"
       - name: Configure
-        run: cmake -S . -B build/gpu -DLOXFX_ENABLE_VULKAN=ON -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build/gpu -DLOXFX_BUILD_VULKAN_SMOKE=ON -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
       - name: Build HLSL and Vulkan runner
         run: cmake --build build/gpu --parallel 2
       - name: Execute compute shader on software Vulkan
@@ -67,7 +67,7 @@ jobs:
       - name: Configure Vulkan backend
         shell: pwsh
         run: |
-          cmake -S . -B build/gpu -A x64 -DLOXFX_ENABLE_VULKAN=ON -DLOXFX_ENABLE_D3D12_SHADERS=ON -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" "-DLOXFX_DXC_EXECUTABLE=$env:LOXFX_DXC"
+          cmake -S . -B build/gpu -A x64 -DLOXFX_BUILD_VULKAN_SMOKE=ON -DLOXFX_ENABLE_D3D12_SHADERS=ON -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" "-DLOXFX_DXC_EXECUTABLE=$env:LOXFX_DXC"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compile Vulkan backend, SPIR-V and D3D12 SM6.6 DXIL
         run: cmake --build build/gpu --config Release --parallel 2

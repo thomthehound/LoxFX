@@ -68,13 +68,14 @@ remain pending.
 Build with the Vulkan SDK and an installed DXC executable:
 
 ```sh
-cmake -S . -B build/gpu -DLOXFX_ENABLE_VULKAN=ON -DBUILD_TESTING=ON
+cmake -S . -B build/gpu -DLOXFX_BUILD_VULKAN_SMOKE=ON -DBUILD_TESTING=ON
 cmake --build build/gpu --config Release
 ctest --test-dir build/gpu -C Release -R loxfx_vulkan_integration -V
 ```
 
-The module is opt-in so the CPU library remains dependency-free. CI executes
-the stage through Mesa software Vulkan for functional validation, **not**
+The smoke harness is opt-in and not installed. The SDK still exports
+only its neutral `LoxFX::Core` target. CI executes the stage through
+Mesa software Vulkan for functional validation, **not**
 representative GPU performance. Hardware qualification remains required.
 See [stage-one execution notes](docs/VULKAN_STAGE_ONE.md).
 
