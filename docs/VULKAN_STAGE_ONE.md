@@ -11,7 +11,9 @@ See [ownership design](GPU_RUNTIME_ARCHITECTURE.md) and
 ## Demonstrated
 
 - Source-derived stage-one HLSL compiles through DXC to Vulkan SPIR-V and
-  D3D12 SM6.6 DXIL. **Only the Vulkan shader executes** so far.
+  D3D12 SM6.6 DXIL. This document originally covered the Vulkan-only
+  milestone; [PR #14](https://github.com/thomthehound/LoxFX/pull/14)
+  subsequently executes the same HLSL natively on D3D12 WARP.
 - Explicit standalone or borrowed-host `DeviceContext`: one logical
   Vulkan device and one compute pipeline shared across grooms. No per-groom
   adapter selection, device creation or implicit migration.
@@ -41,8 +43,10 @@ harness is `include/loxfx/vulkan/smoke_context.h` and
 The integration shader remains a simplified static-root, first-of-six
 stage. It does **not** implement animated root transforms, velocity-shock
 propagation, constraints, collision, wind, follower publication or rendering.
-D3D12 native runtime execution is tracked by
-[issue #12](https://github.com/thomthehound/LoxFX/issues/12).
+D3D12 first-stage execution is implemented in
+[PR #14](https://github.com/thomthehound/LoxFX/pull/14);
+[issue #12](https://github.com/thomthehound/LoxFX/issues/12)
+retains native-hardware performance qualification.
 The Vulkan test uses an API 1.2 subset for software-driver CI;
 production target is Vulkan 1.4.
 
@@ -62,5 +66,5 @@ No optimization has been declared complete on the strength of software CI.
 
 Test externally allocated command buffers and creation failure injection,
 establish host-safe frame scheduling and scene/renderer resource transitions,
-run the same integration stage through native D3D12, then continue the
-source-derived six-stage solver. Require consumer-hardware performance tests.
+continue source-derived six-stage simulation on BOTH native Vulkan and
+D3D12, after the stage-one D3D12 proof in PR #14. Require consumer-hardware performance tests.

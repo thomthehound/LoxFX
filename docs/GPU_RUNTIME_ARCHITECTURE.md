@@ -24,9 +24,13 @@ Initial uploads use temporary staging, and Vulkan creation handles are
 committed only after successful calls. The Linux fixture exercises two
 grooms on one device and an externally borrowed logical device.
 
-**Not yet proven:** injected Vulkan failures, production frames in flight,
-host-renderer interoperability, multiple queues, native D3D12 runtime,
-full six-stage source equivalence or physical hardware throughput.
+**Since this decision:** the resource-ownership structure remains in place,
+and [PR #14](https://github.com/thomthehound/LoxFX/pull/14) adds a
+native executing D3D12 first-stage smoke test with independently recorded
+host command lists (SM6.6/WARP). **Still unproven:** production frames in
+flight, host-renderer publication, full six-stage source/visual equivalence,
+or physical-hardware throughput. This historical audit documents the old
+design's problems rather than describing the current runtime.
 The findings below describe the **historical implementation that was
 replaced**, not the code now compiled by the smoke target.
 
@@ -60,10 +64,10 @@ replaced**, not the code now compiled by the smoke target.
   `LoxFX::Vulkan` and installing `IntegrationRuntime` currently
   advertises a per-groom device-owning, blocking API. That is an
   architectural commitment the project does **not** want to make.
-- **[P1] Cross-backend execution is incomplete.** DXC successfully
-  generates both DXIL and SPIR-V from the same HLSL. D3D12 native resource
-  binding, command execution and timestamps are absent. Shared shader
-  math alone does not guarantee identical execution/ownership.
+- **[P1, stage-one mitigated in PR #14] Cross-backend execution was absent.**
+  DXC compiles DXIL and SPIR-V from shared HLSL. Native D3D12 stage-one
+  resource binding, commands, and timestamps now execute under Windows
+  WARP. Whole-simulation and hardware-performance parity remain incomplete.
 - **[P1] Reference fidelity is still limited.** The shader is a
   deliberate static-root stage-one approximation; it lacks source skinning,
   previous-previous velocity history, constraints, collision and follower
@@ -138,7 +142,9 @@ one canonical HLSL physics implementation and test identical fixture
 parameters and numerical outcomes on both backends. Shader bindings,
 memory models, root signatures, queue/fence primitives and allocation
 strategies remain independently correct. D3D12 DXIL compilation is an
-important gate but not proof of D3D12 runtime parity
+important gate but not proof of D3D12 runtime parity. PR #14 subsequently
+demonstrated actual stage-one DXIL execution on WARP; this still does not
+establish full six-stage or consumer GPU performance parity
 ([issue #12](https://github.com/thomthehound/LoxFX/issues/12)).
 
 ## Keep, discard, and sequence
@@ -166,10 +172,20 @@ unconditionally persistent upload staging.
    Use host-controlled dispatch and diagnostic readback, retaining
    source-derived synchronization. Test initial upload, two grooms,
    several frames, and buffer lifetime.
-4. Bring native D3D12 stage one to equivalent numerical behavior using
-   the same shader, before extending the full six-stage port.
+4. **Implemented in PR #14 internal smoke:** native D3D12 first-stage
+   execution with equivalent numerical fixtures and the same HLSL. Qualify
+   the full six-stage runtime and actual physical GPU behavior separately.
 5. Continue stages 2–6 only after the source host DAG/resource map is
    satisfied and real-hardware GPU timing infrastructure exists.
+
+## Priority and review proportionality
+
+The product gates are **visual quality at least as good as reference,
+preferably substantially better, with lower full-frame GPU cost at
+matched/better quality**. RAII correctness matters, but it is not a mandate
+to recover from every hypothetical driver error. Normal clear failure and
+resource cleanup generally suffice. Prioritize useful performance and
+visual-fidelity work over speculative retry frameworks.
 
 ## Merge gate
 

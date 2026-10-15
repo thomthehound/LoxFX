@@ -40,8 +40,16 @@ performance comparison independent of LoxFX.
   reconfiguration. No repeated capability enumeration on the dispatch path.
 - Account for host scheduling, dispatch count, barriers, buffers, transfers,
   GPU occupancy, rendering latency and memory, not just shader arithmetic.
-- Keep visual quality and plausible dynamics under finite frame budgets.
-  Research-only methods must earn inclusion through representative measured
+- **Quality floor:** full-system hair should look at least as good as the
+  original TressFX reference at comparable configurations, preferably
+  materially better (silhouette, rest-style retention, dynamics, contact
+  and temporal stability). Simple stage-one numerical checks are not
+  sufficient to claim this.
+- **Performance requirement:** lower full-frame cost than reference on
+  comparable hardware **at matched or better visible quality**, across
+  representative single- and multi-groom scenes. Do not improve benchmark
+  results by quietly reducing hair fidelity, density or collision workload.
+- Research-only methods must earn inclusion through representative measured
   improvement over existing options.
 
 ## Boundaries
@@ -86,11 +94,11 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ### M1 — First complete strand simulation
 
-**Architecture hold on draft PR #11:** shared-device and command-recording
-ownership has been corrected in the experimental smoke harness, with the
-previous monolithic `IntegrationRuntime` source removed. This is still
-not a shipping API; native D3D12 execution, failure injection, host
-interop, full solver and hardware performance qualification remain. See
+**Architecture milestone:** PR #11 merged the shared-device and command-
+recording proof. PR #14 adds native D3D12 stage-one execution against
+the same shader and host-owned submission contract. Both test harnesses
+remain internal, not shippable SDK APIs; full six-stage simulation,
+visual parity and actual consumer-GPU performance remain outstanding. See
 [GPU runtime architecture](GPU_RUNTIME_ARCHITECTURE.md) and
 [issue #13](https://github.com/thomthehound/LoxFX/issues/13).
 
@@ -109,8 +117,11 @@ interop, full solver and hardware performance qualification remain. See
   resource creation, frames in flight and production scheduling.
 - [x] Compile identical first-stage HLSL to Vulkan SPIR-V and D3D12 SM6.6
   DXIL in Windows CI, with backend-neutral parameter semantics.
-- [ ] Execute the same stage natively through D3D12 resources, root binding,
-  dispatch, fences and GPU timestamps; compare numerical behavior with Vulkan.
+- [x] Execute the same first-stage HLSL natively through D3D12 DXIL on WARP,
+  with root descriptors/constants, host-controlled command recording,
+  explicit fences/timestamps and numerical parity fixtures (PR #14).
+- [ ] Validate both APIs on physical GPUs and with moving attachment roots,
+  then extend source-faithful stage dependency and publication parity.
 - [ ] Build a native GPU executor for the whole source stage chain; the
   work-plan alone does not simulate hair or validate a shader port.
 
