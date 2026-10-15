@@ -286,6 +286,30 @@ int main(int argc,char** argv) {
               std::abs(anchored_history[1].x-0.25f)<0.0001f,
               "compact history preserves both older rigid attachment positions");
 
+        auto* unused_dummy = static_cast<void*>(nullptr);
+        (void)unused_dummy;
+        auto cmd2=context.begin_diagnostic_commands();
+        context.record_integration(cmd2,attached_gpu,
+            {.time_step=dt,.gravity=gravity,.damping=0,.root_translation_x=1.5f},1);
+        context.record_strand_level(cmd2,attached_gpu,
+            {.velocity_shock_coefficient=0.25f,.acceleration_threshold=0.1f});
+        context.submit_diagnostic_and_wait();
+        const auto strand=context.diagnostic_read_strand_data(attached_gpu);
+        check(strand.size()==attached_prepared->work.packed_guide_strands,
+              "strand data is compact guide-level output");
+        check(std::abs(strand[0].vsp_translation_coefficient.x-0.25f)<0.0001f &&
+              std::abs(strand[0].vsp_translation_coefficient.w-1.0f)<0.0001f,
+              "strand acceleration threshold and translation");
+        check(std::abs(strand[0].vsp_quaternion.w-1.0f)<0.0001f &&
+              std::abs(strand[0].skinning_quaternion.w-1.0f)<0.0001f,
+              "identity quaternion for a translating scalp");
+        auto again=context.begin_diagnostic_commands();
+        context.record_strand_level(again,attached_gpu,
+            {.velocity_shock_coefficient=0.35f,.acceleration_threshold=100.0f});
+        context.submit_diagnostic_and_wait();
+        const auto below=context.diagnostic_read_strand_data(attached_gpu);
+        check(std::abs(below[0].vsp_translation_coefficient.w-0.35f)<0.0001f,
+              "configured VSP coefficient below acceleration threshold");
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared

@@ -293,6 +293,28 @@ int main(int argc,char** argv) {
                 std::abs(anchored_history[1].x-0.25f)<0.0001f,
                 "D3D12 compact history preserves both older attachment positions");
 
+        auto* stage2=context.begin_diagnostic_commands();
+        context.record_integration(stage2,attached_gpu,
+            {.time_step=dt,.gravity=g,.damping=0,.root_translation_x=1.5f},1);
+        context.record_strand_level(stage2,attached_gpu,
+            {.velocity_shock_coefficient=0.25f,.acceleration_threshold=0.1f});
+        context.submit_diagnostic_and_wait();
+        const auto strand=context.diagnostic_read_strand_data(attached_gpu);
+        require(strand.size()==attached_prepared->work.packed_guide_strands,
+                "D3D12 compact guide motion records");
+        require(std::abs(strand[0].vsp_translation_coefficient.x-0.25f)<0.0001f &&
+                std::abs(strand[0].vsp_translation_coefficient.w-1.0f)<0.0001f,
+                "D3D12 motion translation and accelerated VSP coefficient");
+        require(std::abs(strand[0].vsp_quaternion.w-1.0f)<0.0001f &&
+                std::abs(strand[0].skinning_quaternion.w-1.0f)<0.0001f,
+                "D3D12 identity quaternion on translating scalp");
+        auto* again=context.begin_diagnostic_commands();
+        context.record_strand_level(again,attached_gpu,
+            {.velocity_shock_coefficient=0.35f,.acceleration_threshold=100.0f});
+        context.submit_diagnostic_and_wait();
+        const auto below=context.diagnostic_read_strand_data(attached_gpu);
+        require(std::abs(below[0].vsp_translation_coefficient.w-0.35f)<0.0001f,
+                "D3D12 ordinary VSP coefficient below threshold");
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
                  <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms
