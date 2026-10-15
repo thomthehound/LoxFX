@@ -660,6 +660,41 @@ int main(int argc,char** argv) {
         check(std::abs(guide_only[2].y-1.0f)<0.0001f,
                   "Vulkan guide-only output produces valid tangents");
 
+        // Manual review: cross-group publication with three followers
+        // and guide padding. This exercises packed offsets beyond one
+        // 64-lane workgroup, not just the single-guide fixture.
+        auto many_asset=fixture(1.0f,17);
+        auto many_prep=loxfx::prepare_groom(many_asset,
+            {.followers_per_guide=3,.follower_root_radius=0.2f,
+             .follower_tip_separation=0.7f,.seed=42u});
+        check(many_prep.has_value(),"prepare cross-group followers");
+        auto many_gpu=context.prepare(*many_prep);
+        auto many_cmd=context.begin_diagnostic_commands();
+        context.record_followers(many_cmd,many_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto many_positions=context.diagnostic_read_positions(many_gpu);
+        const auto many_tangents=context.diagnostic_read_tangents(many_gpu);
+        for(std::uint32_t guide=0;guide<17u;++guide) {
+            const std::uint32_t base=guide*4u*4u;
+            for(std::uint32_t v=0;v<4u;++v) {
+                const auto& q=many_positions[base+v];
+                const auto& rest=many_prep->rest_positions[base+v];
+                check(std::abs(q.x-rest.x)<0.0003f &&
+                          std::abs(q.y-rest.y)<0.0003f,
+                          "Vulkan cross-group guide positions");
+                for(std::uint32_t follower=1;follower<=3u;++follower) {
+                    const std::uint32_t idx=base+follower*4u+v;
+                    const auto& expected=many_prep->rest_positions[idx];
+                    const auto& result=many_positions[idx];
+                    check(std::abs(result.x-expected.x)<0.0003f &&
+                              std::abs(result.y-expected.y)<0.0003f &&
+                              std::abs(result.z-expected.z)<0.0003f &&
+                              std::abs(many_tangents[idx].y-1.0f)<0.0003f,
+                              "Vulkan cross-group three-follower offsets and tangents");
+                }
+            }
+        }
+
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared
