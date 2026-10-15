@@ -284,3 +284,11 @@ throughput. **Status:** blocked until multi-groom runtime and GPU profiling.
 
 Add evidence and decisions at each meaningful PR/handoff; never delete
 unresolved leads merely because their implementation is postponed.
+
+- **2026-10-15, PR #16 stage two:** Implemented the guide-only
+  strand-level output in GPU memory (48 bytes per padded guide) and
+  reused the two-root previous-previous state; no follower output or
+  per-frame CPU readback. D3D12 reuses UAV states between the first
+  two shader passes rather than inserting extra resource transitions.
+  Structural savings only: OPT-001/002/003/009/011 remain open until
+  actual consumer hardware timing and fidelity comparisons.

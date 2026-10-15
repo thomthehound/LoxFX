@@ -101,6 +101,12 @@ history, providing correctly ordered inputs for source-defined
 orientation, VSP and additional passes are still outstanding. See
 [animated-root stage](ROOT_MOTION_STAGE.md).
 
+**Draft PR #16:** actual source-derived `CalculateStrandLevelData`
+stage now runs after integration on *both* native GPU backends,
+writing one compact VSP quaternion/translation/coefficient record
+per guide. Skinning rotation stays identity until skeletal attachments
+are implemented. See [strand-level motion](STRAND_MOTION_STAGE.md).
+
 **Architecture milestone:** PR #11 merged the shared-device and command-
 recording proof. PR #14 adds native D3D12 stage-one execution against
 the same shader and host-owned submission contract. Both test harnesses
