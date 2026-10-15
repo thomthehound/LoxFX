@@ -31,6 +31,10 @@ public:
     GroomState(const GroomState&) = delete;
     GroomState& operator=(const GroomState&) = delete;
     [[nodiscard]] std::uint64_t allocated_buffer_bytes() const noexcept;
+    // Borrowed resource handles for a host renderer; no ownership transfer.
+    // Synchronization and compute-to-graphics visibility remain host-owned.
+    [[nodiscard]] ID3D12Resource* positions_buffer() const noexcept;
+    [[nodiscard]] ID3D12Resource* tangents_buffer() const noexcept;
 private:
     friend class DeviceContext;
     struct Impl;
@@ -60,6 +64,9 @@ public:
     // Guide-local shape correction, following strand motion and VSP.
     // Stiffness is [0,1]; iterations come from the prepared work plan.
     // Stage-five length/wind pass; collision is handled separately.
+    // Final pass publishes follower positions and per-vertex tangents.
+    void record_followers(ID3D12GraphicsCommandList* command_list,
+                          const GroomState& groom) const;
     void record_length_wind(ID3D12GraphicsCommandList* command_list,
                             const GroomState& groom,
                             const LengthWindParameters& parameters) const;
@@ -78,6 +85,7 @@ public:
     ID3D12GraphicsCommandList* begin_diagnostic_commands();
     void submit_diagnostic_and_wait();
     [[nodiscard]] std::vector<Float4> diagnostic_read_positions(const GroomState& groom);
+    [[nodiscard]] std::vector<Float4> diagnostic_read_tangents(const GroomState& groom);
     [[nodiscard]] std::vector<Float4> diagnostic_read_root_history(const GroomState& groom);
     [[nodiscard]] std::vector<StrandMotionData> diagnostic_read_strand_data(const GroomState& groom);
     [[nodiscard]] double last_diagnostic_gpu_milliseconds() const noexcept;

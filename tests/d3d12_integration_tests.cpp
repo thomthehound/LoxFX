@@ -569,6 +569,133 @@ int main(int argc,char** argv) {
                  long_result[64].y==long_prepared->rest_positions[64].y,
                  "D3D12 long strand length simulation and follower isolation");
 
+        // Final output: animated guide positions plus exact source-prepared
+        // per-follower offsets, including nonzero tip separation.
+        auto follow_asset=fixture(0.0f,1);
+        follow_asset.positions[1].w=0.0f;
+        auto follow_prep=loxfx::prepare_groom(follow_asset,
+            {.followers_per_guide=2,.follower_root_radius=0.35f,
+             .follower_tip_separation=0.65f,.seed=17u});
+        require(follow_prep.has_value(),"prepare follower publication");
+        auto follow_gpu=context.prepare_diagnostic(*follow_prep);
+        auto* follow_cmd=context.begin_diagnostic_commands();
+        context.record_integration(follow_cmd,follow_gpu,
+            {.time_step=dt,.gravity=720.0f,.damping=0.0f,
+             .root_translation_x=1.0f},1);
+        context.record_strand_level(follow_cmd,follow_gpu,
+            {.velocity_shock_coefficient=0.0f,.acceleration_threshold=100.0f});
+        context.record_velocity_shock(follow_cmd,follow_gpu);
+        context.record_local_shape(follow_cmd,follow_gpu,0.6f);
+        context.record_length_wind(follow_cmd,follow_gpu,
+            {.time_step=dt,.length_iterations=4});
+        context.record_followers(follow_cmd,follow_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto published=context.diagnostic_read_positions(follow_gpu);
+        const auto published_tangents=context.diagnostic_read_tangents(follow_gpu);
+        require(published.size()==follow_prep->rest_positions.size() &&
+                  published_tangents.size()==published.size(),
+                  "D3D12 follower publication allocates full outputs");
+        require(std::abs(published[2].x-follow_prep->rest_positions[2].x)>0.01f,
+                  "D3D12 guide actually moves before publication");
+        for(std::uint32_t v=0;v<4u;++v) {
+            const auto& tangent=published_tangents[v];
+            const float norm=std::sqrt(tangent.x*tangent.x+
+                                       tangent.y*tangent.y+tangent.z*tangent.z);
+            require(std::isfinite(norm) && std::abs(norm-1.0f)<0.0003f,
+                      "D3D12 guide tangents normalized");
+            for(std::uint32_t f=1u;f<=2u;++f) {
+                const std::uint32_t index=f*4u+v;
+                const auto& q=published[index];
+                const auto& rest_f=follow_prep->rest_positions[index];
+                const auto& rest_g=follow_prep->rest_positions[v];
+                require(std::abs(q.x-(published[v].x+rest_f.x-rest_g.x))<0.0003f &&
+                          std::abs(q.y-(published[v].y+rest_f.y-rest_g.y))<0.0003f &&
+                          std::abs(q.z-(published[v].z+rest_f.z-rest_g.z))<0.0003f,
+                          "D3D12 followers preserve prepared offsets including tip ease");
+                require(std::abs(published_tangents[index].x-tangent.x)<0.0001f &&
+                          std::abs(published_tangents[index].y-tangent.y)<0.0001f &&
+                          std::abs(published_tangents[index].z-tangent.z)<0.0001f,
+                          "D3D12 follower tangents copy guide final direction");
+            }
+        }
+        // OPT-001 regression: no follower rest-vertex reads during GPU
+        // publication. Disturb the prepared follower rest positions while
+        // retaining the canonical compact offset records and guide rest.
+        auto compact_only=*follow_prep;
+        for(std::uint32_t strand=1;strand<=2u;++strand)
+            for(std::uint32_t v=0;v<4u;++v) {
+                auto& p=compact_only.rest_positions[strand*4u+v];
+                p.x+=10.0f; p.y-=7.0f; p.z+=5.0f;
+            }
+        auto compact_gpu=context.prepare_diagnostic(compact_only);
+        auto* compact_cmd=context.begin_diagnostic_commands();
+        context.record_followers(compact_cmd,compact_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto compact_result=context.diagnostic_read_positions(compact_gpu);
+        for(std::uint32_t strand=1;strand<=2u;++strand)
+            for(std::uint32_t v=0;v<4u;++v) {
+                const auto i=strand*4u+v;
+                const auto& original=follow_prep->rest_positions[i];
+                require(std::abs(compact_result[i].x-original.x)<0.0003f &&
+                      std::abs(compact_result[i].y-original.y)<0.0003f &&
+                      std::abs(compact_result[i].z-original.z)<0.0003f,
+                      "D3D12 publication requires only compact offsets, not follower rest vertices");
+            }
+
+        auto* repeat_cmd=context.begin_diagnostic_commands();
+        context.record_followers(repeat_cmd,follow_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto repeated=context.diagnostic_read_positions(follow_gpu);
+        for(std::uint32_t v=0;v<12u;++v)
+            require(std::abs(repeated[v].x-published[v].x)<0.0001f &&
+                      std::abs(repeated[v].y-published[v].y)<0.0001f,
+                      "D3D12 repeated publication does not accumulate offsets");
+
+        auto no_follow_prep=loxfx::prepare_groom(follow_asset);
+        require(no_follow_prep.has_value(),"prepare guide-only publication");
+        auto no_follow_gpu=context.prepare_diagnostic(*no_follow_prep);
+        auto* no_follow_cmd=context.begin_diagnostic_commands();
+        context.record_followers(no_follow_cmd,no_follow_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto guide_only=context.diagnostic_read_tangents(no_follow_gpu);
+        require(std::abs(guide_only[2].y-1.0f)<0.0001f,
+                  "D3D12 guide-only output produces valid tangents");
+
+        // Manual review: cross-group publication with three followers
+        // and guide padding. This exercises packed offsets beyond one
+        // 64-lane workgroup, not just the single-guide fixture.
+        auto many_asset=fixture(1.0f,17);
+        auto many_prep=loxfx::prepare_groom(many_asset,
+            {.followers_per_guide=3,.follower_root_radius=0.2f,
+             .follower_tip_separation=0.7f,.seed=42u});
+        require(many_prep.has_value(),"prepare cross-group followers");
+        auto many_gpu=context.prepare_diagnostic(*many_prep);
+        auto* many_cmd=context.begin_diagnostic_commands();
+        context.record_followers(many_cmd,many_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto many_positions=context.diagnostic_read_positions(many_gpu);
+        const auto many_tangents=context.diagnostic_read_tangents(many_gpu);
+        for(std::uint32_t guide=0;guide<17u;++guide) {
+            const std::uint32_t base=guide*4u*4u;
+            for(std::uint32_t v=0;v<4u;++v) {
+                const auto& q=many_positions[base+v];
+                const auto& rest=many_prep->rest_positions[base+v];
+                require(std::abs(q.x-rest.x)<0.0003f &&
+                          std::abs(q.y-rest.y)<0.0003f,
+                          "D3D12 cross-group guide positions");
+                for(std::uint32_t follower=1;follower<=3u;++follower) {
+                    const std::uint32_t idx=base+follower*4u+v;
+                    const auto& expected=many_prep->rest_positions[idx];
+                    const auto& result=many_positions[idx];
+                    require(std::abs(result.x-expected.x)<0.0003f &&
+                              std::abs(result.y-expected.y)<0.0003f &&
+                              std::abs(result.z-expected.z)<0.0003f &&
+                              std::abs(many_tangents[idx].y-1.0f)<0.0003f,
+                              "D3D12 cross-group three-follower offsets and tangents");
+                }
+            }
+        }
+
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
                  <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms

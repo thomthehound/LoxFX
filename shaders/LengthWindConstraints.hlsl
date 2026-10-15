@@ -48,7 +48,10 @@ struct Parameters {
 
 LOXFX_BINDING(0) RWStructuredBuffer<float4> positions : register(u0,space0);
 LOXFX_BINDING(1) RWStructuredBuffer<float4> previous_positions : register(u1,space0);
-LOXFX_BINDING(5) StructuredBuffer<float> guide_rest_lengths : register(t5,space0);
+// Immutable packed static data: guide rest lengths, then follower root
+// offsets. Byte-addressing allows 4-byte lengths and 16-byte offsets to
+// coexist in one allocation and descriptor.
+LOXFX_BINDING(5) ByteAddressBuffer guide_static_data : register(t5,space0);
 
 groupshared float4 shared_positions[64];
 groupshared float shared_lengths[64];
@@ -85,7 +88,7 @@ void LengthWindConstraints(uint local_id : SV_GroupIndex,
     const uint rest_index=guide*params.vertices_per_strand+vertex;
     const float4 old=previous_positions[index];
     shared_positions[local_id]=positions[index];
-    shared_lengths[local_id]=guide_rest_lengths[rest_index];
+    shared_lengths[local_id]=asfloat(guide_static_data.Load(rest_index*4u));
     GroupMemoryBarrierWithGroupSync();
 
     if(vertex>=2u && vertex+1u<params.vertices_per_strand &&

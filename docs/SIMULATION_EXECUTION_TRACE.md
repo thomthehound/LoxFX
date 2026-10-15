@@ -5,8 +5,8 @@
 
 Status: source audit and executable work-count contract, 15 October 2026.
 The first four stages and the length/wind parts of stage five now execute
-in native Vulkan and D3D12 integration harnesses. Collision and full
-tangent publication remain outstanding. Complete simulation, visible quality and physical-GPU profiling
+in native Vulkan and D3D12 integration harnesses. Stage six also publishes
+guide/follower positions and final tangents. Collision remains outstanding. Complete simulation, visible quality and physical-GPU profiling
 remain subsequent milestones.
 
 ## Source references
@@ -147,7 +147,7 @@ OPT-003, OPT-004 and OPT-009 in
 ## Immediate next implementation
 
 Complete the stage-five collision and tangent/publication dependencies,
-then add follower publication to the existing shared-source native
+then validate the completed follower publication in the shared-source native
 Vulkan/D3D12 simulation sequence.
 Preserve source stage ordering and inter-pass dependencies without introducing
 a separate scheduling pipeline. Integrate a minimal visual consumer once
