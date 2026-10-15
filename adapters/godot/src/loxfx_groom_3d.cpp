@@ -45,6 +45,8 @@ void LoxFXGroom3D::_bind_methods() {
                     &LoxFXGroom3D::is_native_diagnostic_active);
     ClassDB::bind_method(D_METHOD("get_native_diagnostic_steps"),
                     &LoxFXGroom3D::get_native_diagnostic_steps);
+    ClassDB::bind_method(D_METHOD("get_native_diagnostic_root_position"),
+                    &LoxFXGroom3D::get_native_diagnostic_root_position);
     ClassDB::bind_method(D_METHOD("get_native_diagnostic_backend"),
                     &LoxFXGroom3D::get_native_diagnostic_backend);
     ClassDB::bind_method(D_METHOD("load_tfx_bytes", "data", "followers_per_guide",
@@ -312,6 +314,10 @@ bool LoxFXGroom3D::start_native_diagnostic(const String& shader_file,
             shader, *groom_, software_device);
         native_ = std::move(replacement);
         native_frames_ = 0;
+        native_last_root_ = Vector3(groom_->rest_positions[0].x,
+                                    groom_->rest_positions[0].y,
+                                    groom_->rest_positions[0].z);
+        native_root_valid_ = true;
         error_ = String();
         return true;
     } catch (const std::exception& error) {
@@ -366,6 +372,8 @@ bool LoxFXGroom3D::step_native_diagnostic(
             points.set(i, Vector3(v.x,v.y,v.z));
         }
         if (!publish_positions(points)) return false;
+        native_last_root_ = Vector3(snapshot[0].x,snapshot[0].y,snapshot[0].z);
+        native_root_valid_ = true;
         ++native_frames_;
         return true;
     } catch(const std::exception& error) {
@@ -390,7 +398,14 @@ bool LoxFXGroom3D::reset_native_diagnostic() {
     try {
         native_->reset(*groom_);
         native_frames_=0;
-        return publish_positions(get_initial_positions());
+        const bool published = publish_positions(get_initial_positions());
+        if (published) {
+            native_last_root_ = Vector3(groom_->rest_positions[0].x,
+                                       groom_->rest_positions[0].y,
+                                       groom_->rest_positions[0].z);
+            native_root_valid_ = true;
+        }
+        return published;
     } catch (const std::exception& error) {
         fail(String("LoxFX native diagnostic reset: ") +
              String::utf8(error.what()));
@@ -406,6 +421,7 @@ void LoxFXGroom3D::stop_native_diagnostic() {
 #if defined(LOXFX_GODOT_NATIVE_DIAGNOSTIC)
     native_.reset();
     native_frames_ = 0;
+    native_root_valid_ = false;
 #endif
 }
 
@@ -425,6 +441,13 @@ int LoxFXGroom3D::get_native_diagnostic_steps() const {
 #else
     return 0;
 #endif
+}
+
+Vector3 LoxFXGroom3D::get_native_diagnostic_root_position() const {
+#if defined(LOXFX_GODOT_NATIVE_DIAGNOSTIC)
+    if (native_ && native_root_valid_) return native_last_root_;
+#endif
+    return {};
 }
 
 String LoxFXGroom3D::get_native_diagnostic_backend() const {
