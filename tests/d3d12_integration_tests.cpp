@@ -170,22 +170,49 @@ int main(int argc,char** argv) {
             hrcheck(other_device->QueryInterface(
                         IID_PPV_ARGS(alternate_id.GetAddressOf())),
                     "inspect alternate COM identity");
-            require(primary_id.Get()!=alternate_id.Get(),
-                    "test must create a genuinely independent D3D12 device");
-            D3D12_COMMAND_QUEUE_DESC queue_desc{};
-            queue_desc.Type=D3D12_COMMAND_LIST_TYPE_COMPUTE;
-            ComPtr<ID3D12CommandQueue> wrong_queue;
-            hrcheck(other_device->CreateCommandQueue(&queue_desc,
-                        IID_PPV_ARGS(wrong_queue.GetAddressOf())),
-                    "create wrong-device command queue");
-            bool rejected=false;
-            try {
-                gpu::DeviceContext invalid(
-                    {context.native_device(),wrong_queue.Get()},argv[1]);
-            } catch (const std::invalid_argument&) {
-                rejected=true;
+            // D3D12CreateDevice may return a cached device COM identity for
+            // repeated calls on one adapter (notably WARP). Try other adapters
+            // rather than pretending those are distinct devices.
+            if (primary_id.Get()==alternate_id.Get()) {
+                for(UINT index=0;;++index){
+                    ComPtr<IDXGIAdapter1> candidate;
+                    if(factory->EnumAdapters1(index,candidate.GetAddressOf())==
+                       DXGI_ERROR_NOT_FOUND)break;
+                    DXGI_ADAPTER_DESC1 desc{};
+                    if(FAILED(candidate->GetDesc1(&desc)) ||
+                       (desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE))continue;
+                    ComPtr<ID3D12Device> probe;
+                    if(FAILED(D3D12CreateDevice(candidate.Get(),D3D_FEATURE_LEVEL_12_0,
+                            IID_PPV_ARGS(probe.GetAddressOf()))))continue;
+                    ComPtr<IUnknown> identity;
+                    hrcheck(probe->QueryInterface(IID_PPV_ARGS(identity.GetAddressOf())),
+                            "inspect alternate hardware device COM identity");
+                    if(identity.Get()!=primary_id.Get()){
+                        other_device=std::move(probe);
+                        alternate_id=std::move(identity);
+                        break;
+                    }
+                }
             }
-            require(rejected,"reject queue from a different D3D12 device");
+            if(primary_id.Get()!=alternate_id.Get()){
+                D3D12_COMMAND_QUEUE_DESC queue_desc{};
+                queue_desc.Type=D3D12_COMMAND_LIST_TYPE_COMPUTE;
+                ComPtr<ID3D12CommandQueue> wrong_queue;
+                hrcheck(other_device->CreateCommandQueue(&queue_desc,
+                            IID_PPV_ARGS(wrong_queue.GetAddressOf())),
+                        "create wrong-device command queue");
+                bool rejected=false;
+                try {
+                    gpu::DeviceContext invalid(
+                        {context.native_device(),wrong_queue.Get()},argv[1]);
+                } catch (const std::invalid_argument&) {
+                    rejected=true;
+                }
+                require(rejected,"reject queue from a different D3D12 device");
+            } else {
+                std::cout << "Cross-device negative check skipped: only one "
+                             "D3D12 device COM identity available on runner\\n";
+            }
         }
 
         // A borrowed DIRECT queue must use DIRECT command allocators/lists
