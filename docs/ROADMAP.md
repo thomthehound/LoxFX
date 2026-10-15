@@ -80,11 +80,13 @@ The optional `adapters/godot` GDExtension is being introduced as a
 first-class engine adapter, not a dependency of the SDK or a Godauldron-only
 experiment. Stage one imports TressFX bytes, prepares visible strands and
 allows diagnostic packed position publication into a Godot line mesh. It
-**does not yet run the native simulation** from a Godot scene and its CPU
-mesh upload is not a production performance result. Its next gates are a
-verified native Vulkan/D3D12 simulation handoff, render-queue ownership
-and synchronization, higher-fidelity strand shading and validated
-CPU versus GPU data transfer costs. See
+now has an opt-in **SDK-owned native Vulkan/D3D12 diagnostic simulation
+path**: genuine source-ordered GPU compute stages run in a native standalone
+context, finish on an SDK-owned queue, and publish their completed output
+through a blocking GPU→CPU→Godot mesh bridge. This is not a production frame
+path. The next gates are renderer-device ownership and GPU resource
+synchronization, real skeletal attachment orientation/contact, high-quality
+strand shading and hardware visual/full-frame performance qualification. See
 [Godot adapter integration](../adapters/godot/README.md).
 
 ## Milestones
