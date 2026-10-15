@@ -21,6 +21,56 @@ loxfx::GroomAsset fixture(float base, std::uint32_t strands) {
                                    0,v==0?0.0f:1.0f});
     return g;
 }
+// A host-controlled command pool and queue, wholly independent of the
+// DeviceContext's optional diagnostic submission utilities.
+struct HostBatch {
+    VkDevice device=VK_NULL_HANDLE;
+    VkCommandPool pool=VK_NULL_HANDLE;
+    VkFence fence=VK_NULL_HANDLE;
+    VkCommandBuffer commands=VK_NULL_HANDLE;
+    explicit HostBatch(VkDevice logical):device(logical){}
+    HostBatch(const HostBatch&)=delete;
+    HostBatch& operator=(const HostBatch&)=delete;
+    ~HostBatch() {
+        if(fence)vkDestroyFence(device,fence,nullptr);
+        if(pool)vkDestroyCommandPool(device,pool,nullptr);
+    }
+    void init(std::uint32_t queue_family) {
+        VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pool_info.queueFamilyIndex=queue_family;
+        VkCommandPool temp_pool=VK_NULL_HANDLE;
+        check(vkCreateCommandPool(device,&pool_info,nullptr,&temp_pool)==VK_SUCCESS,
+              "host creates its own command pool");
+        pool=temp_pool;
+        VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocate.commandPool=pool;
+        allocate.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocate.commandBufferCount=1;
+        check(vkAllocateCommandBuffers(device,&allocate,&commands)==VK_SUCCESS,
+              "host allocates its own command buffer");
+        VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VkFence temp_fence=VK_NULL_HANDLE;
+        check(vkCreateFence(device,&fence_info,nullptr,&temp_fence)==VK_SUCCESS,
+              "host creates its own submission fence");
+        fence=temp_fence;
+    }
+    void begin() {
+        VkCommandBufferBeginInfo begin_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        check(vkBeginCommandBuffer(commands,&begin_info)==VK_SUCCESS,
+              "host begins external command buffer");
+    }
+    void submit(VkQueue queue) {
+        check(vkEndCommandBuffer(commands)==VK_SUCCESS,
+              "host ends external command buffer");
+        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        si.commandBufferCount=1;
+        si.pCommandBuffers=&commands;
+        check(vkQueueSubmit(queue,1,&si,fence)==VK_SUCCESS,
+              "host submits external integration commands");
+        check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX)==VK_SUCCESS,
+              "host waits for its own submission");
+    }
+};
 template<typename Fn>void reject(Fn&& fn, const char* what) {
     try { fn(); }
     catch (const std::invalid_argument&) { return; }
@@ -120,6 +170,24 @@ int main(int argc,char** argv) {
         }
         check(context.native_device()==shared,
               "borrowed context destruction leaves host device intact");
+
+        // The SDK recorder must also work in a command buffer allocated,
+        // submitted, and fenced entirely by the host (not by diagnostics).
+        const auto external=context.borrowed_handles();
+        HostBatch host(external.logical);
+        host.init(external.queue_family);
+        host.begin();
+        const auto submitted_before=context.gpu_submission_count();
+        context.record_integration(host.commands,first,
+            {.time_step=dt,.gravity=gravity,.damping=0},1);
+        check(context.gpu_submission_count()==submitted_before,
+              "host recording has no internal queue submission");
+        host.submit(external.compute_queue);
+        check(context.gpu_submission_count()==submitted_before,
+              "host owns queue submission and fence independent of SDK diagnostics");
+        const auto host_after=context.diagnostic_read_positions(first);
+        check(std::abs(host_after[1].y-(1.0f-15*step))<0.0001f,
+              "externally submitted commands advance the same GPU history");
 
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
