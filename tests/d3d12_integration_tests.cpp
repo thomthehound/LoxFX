@@ -4,6 +4,7 @@
 #include "loxfx/d3d12/smoke_context.h"
 
 #include <wrl/client.h>
+#include <dxgi1_6.h>
 #include <windows.h>
 #include <cmath>
 #include <iostream>
@@ -147,6 +148,44 @@ int main(int argc,char** argv) {
             auto result=borrowed.diagnostic_read_positions(third);
             require(std::abs(result[1].y-(1.0f-delta))<0.0001f,
                     "native compute through borrowed D3D12 context");
+        }
+
+        // Regress Codex P2 on merged PR #14: a queue from a *different*
+        // device is not valid even if that device is the same WARP adapter.
+        {
+            ComPtr<IDXGIFactory4> factory;
+            hrcheck(CreateDXGIFactory2(0,IID_PPV_ARGS(factory.GetAddressOf())),
+                    "create alternate DXGI factory");
+            ComPtr<IDXGIAdapter> warp_adapter;
+            hrcheck(factory->EnumWarpAdapter(IID_PPV_ARGS(warp_adapter.GetAddressOf())),
+                    "select alternate WARP adapter");
+            ComPtr<ID3D12Device> other_device;
+            hrcheck(D3D12CreateDevice(warp_adapter.Get(),D3D_FEATURE_LEVEL_12_0,
+                        IID_PPV_ARGS(other_device.GetAddressOf())),
+                    "create independent WARP device");
+            ComPtr<IUnknown> primary_id, alternate_id;
+            hrcheck(context.native_device()->QueryInterface(
+                        IID_PPV_ARGS(primary_id.GetAddressOf())),
+                    "inspect primary COM identity");
+            hrcheck(other_device->QueryInterface(
+                        IID_PPV_ARGS(alternate_id.GetAddressOf())),
+                    "inspect alternate COM identity");
+            require(primary_id.Get()!=alternate_id.Get(),
+                    "test must create a genuinely independent D3D12 device");
+            D3D12_COMMAND_QUEUE_DESC queue_desc{};
+            queue_desc.Type=D3D12_COMMAND_LIST_TYPE_COMPUTE;
+            ComPtr<ID3D12CommandQueue> wrong_queue;
+            hrcheck(other_device->CreateCommandQueue(&queue_desc,
+                        IID_PPV_ARGS(wrong_queue.GetAddressOf())),
+                    "create wrong-device command queue");
+            bool rejected=false;
+            try {
+                gpu::DeviceContext invalid(
+                    {context.native_device(),wrong_queue.Get()},argv[1]);
+            } catch (const std::invalid_argument&) {
+                rejected=true;
+            }
+            require(rejected,"reject queue from a different D3D12 device");
         }
 
         // A borrowed DIRECT queue must use DIRECT command allocators/lists

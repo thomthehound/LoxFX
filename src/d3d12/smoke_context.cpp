@@ -205,6 +205,24 @@ struct DeviceContext::Impl {
     void configure(ExternalDevice external) {
         if (!external.device || !external.compute_queue)
             throw std::invalid_argument("null borrowed D3D12 device/queue");
+        // D3D12 command queues can only submit resources and lists from
+        // their own device. Compare COM identities (IUnknown), not raw
+        // interface pointers or adapter LUIDs: separate devices on the same
+        // adapter are still incompatible.
+        ComPtr<ID3D12Device> queue_device;
+        if (FAILED(external.compute_queue->GetDevice(
+                IID_PPV_ARGS(queue_device.GetAddressOf()))))
+            throw std::invalid_argument("borrowed D3D12 queue has no owning device");
+        ComPtr<IUnknown> supplied_identity, queue_identity;
+        checked(external.device->QueryInterface(
+                    IID_PPV_ARGS(supplied_identity.GetAddressOf())),
+                "identify borrowed D3D12 device");
+        checked(queue_device->QueryInterface(
+                    IID_PPV_ARGS(queue_identity.GetAddressOf())),
+                "identify borrowed D3D12 queue device");
+        if (supplied_identity.Get() != queue_identity.Get())
+            throw std::invalid_argument("borrowed D3D12 queue belongs to a different device");
+
         device = external.device; // AddRef, never destroy host's own reference.
         queue = external.compute_queue;
         const D3D12_COMMAND_QUEUE_DESC desc = queue->GetDesc();
