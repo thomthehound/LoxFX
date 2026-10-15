@@ -16,7 +16,9 @@ var _elapsed: float = 0.0
 var _running: bool = false
 var _error: String = ""
 
-@onready var _stage: Node3D = $PortraitStage
+# Godauldron's optional lifecycle callbacks are not methods of Node3D's
+# static Godot class: use a dynamic script-bearing scene reference.
+@onready var _stage: Variant = $PortraitStage
 @onready var _subject: Node3D = $PortraitStage/SubjectMotion
 @onready var _anchor: Node3D = $PortraitStage/SubjectMotion/SubjectAnchor
 
