@@ -57,6 +57,7 @@ public:
     void stop_native_diagnostic();
     bool is_native_diagnostic_active() const;
     int get_native_diagnostic_steps() const;
+    int get_native_diagnostic_context_count() const;
     ::godot::Vector3 get_native_diagnostic_root_position() const;
     ::godot::String get_native_diagnostic_backend() const;
 
