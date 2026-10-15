@@ -4,8 +4,9 @@
 # TressFX 4.1 guide-strand simulation execution and performance trace
 
 Status: source audit and executable work-count contract, 15 October 2026.
-The first four stages now execute in native Vulkan and D3D12 integration
-harnesses. Complete simulation, visible quality and physical-GPU profiling
+The first four stages and the length/wind parts of stage five now execute
+in native Vulkan and D3D12 integration harnesses. Collision and full
+tangent publication remain outstanding. Complete simulation, visible quality and physical-GPU profiling
 remain subsequent milestones.
 
 ## Source references
@@ -145,8 +146,9 @@ OPT-003, OPT-004 and OPT-009 in
 
 ## Immediate next implementation
 
-Continue the existing shared-source native Vulkan/D3D12 simulation sequence
-with length/wind/collision and follower publication.
+Complete the stage-five collision and tangent/publication dependencies,
+then add follower publication to the existing shared-source native
+Vulkan/D3D12 simulation sequence.
 Preserve source stage ordering and inter-pass dependencies without introducing
 a separate scheduling pipeline. Integrate a minimal visual consumer once
 renderable followers can be published, then qualify full-frame costs and
