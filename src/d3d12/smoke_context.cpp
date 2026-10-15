@@ -787,6 +787,29 @@ std::vector<Float4> DeviceContext::diagnostic_read_positions(const GroomState& s
     readback->Unmap(0,&none);
     return result;
 }
+std::vector<Float4> DeviceContext::diagnostic_read_tangents(const GroomState& state){
+    if(!impl_||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("readback from unrelated D3D12 context");
+    const auto& g=*state.impl_;
+    auto readback=allocate_buffer(impl_->device.Get(),g.bytes,
+                    D3D12_HEAP_TYPE_READBACK,D3D12_RESOURCE_FLAG_NONE,
+                    D3D12_RESOURCE_STATE_COPY_DEST);
+    auto* cmd=impl_->begin();
+    transition(cmd,g.tangents.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                     D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cmd->CopyBufferRegion(readback.Get(),0,g.tangents.Get(),0,g.bytes);
+    transition(cmd,g.tangents.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    impl_->submit();
+    std::vector<Float4> result(static_cast<std::size_t>(g.bytes)/sizeof(Float4));
+    void* mapped=nullptr;
+    D3D12_RANGE reading{0,static_cast<SIZE_T>(g.bytes)};
+    checked(readback->Map(0,&reading,&mapped),"map D3D12 tangent readback");
+    std::memcpy(result.data(),mapped,static_cast<std::size_t>(g.bytes));
+    D3D12_RANGE none{0,0};
+    readback->Unmap(0,&none);
+    return result;
+}
 std::vector<Float4> DeviceContext::diagnostic_read_root_history(const GroomState& state){
     if(!impl_||!state.impl_||state.impl_->context_id!=impl_.get())
         throw std::invalid_argument("readback from unrelated D3D12 context");
