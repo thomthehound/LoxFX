@@ -94,18 +94,15 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ### M1 — First complete strand simulation
 
-**Next incremental physics milestone (draft PR #15):** shared
-host-driven root translation and two-root-per-guide previous-previous
-history, providing correctly ordered inputs for source-defined
-`CalculateStrandLevelData`. Full skeletal moving roots, strand-level
-orientation, VSP and additional passes are still outstanding. See
-[animated-root stage](ROOT_MOTION_STAGE.md).
-
-**Draft PR #16:** actual source-derived `CalculateStrandLevelData`
-stage now runs after integration on *both* native GPU backends,
-writing one compact VSP quaternion/translation/coefficient record
-per guide. Skinning rotation stays identity until skeletal attachments
-are implemented. See [strand-level motion](STRAND_MOTION_STAGE.md).
+**GPU stages 1–3:** Integration/global shape, strand-level motion, and
+velocity-shock propagation run as internal native Vulkan and D3D12 compute
+passes. PRs #15 and #16 established translated attachments, compact proximal
+history, and the per-guide motion data; stage three now applies that motion
+to distal guide vertices and updates both current and previous position
+history. Full bone-space attachments, constraints, collision and follower
+publication are still needed. See [animated-root stage](ROOT_MOTION_STAGE.md),
+[strand-level motion](STRAND_MOTION_STAGE.md), and
+[velocity-shock stage](VELOCITY_SHOCK_STAGE.md).
 
 **Architecture milestone:** PR #11 merged the shared-device and command-
 recording proof. PR #14 adds native D3D12 stage-one execution against
@@ -133,8 +130,10 @@ visual parity and actual consumer-GPU performance remain outstanding. See
 - [x] Execute the same first-stage HLSL natively through D3D12 DXIL on WARP,
   with root descriptors/constants, host-controlled command recording,
   explicit fences/timestamps and numerical parity fixtures (PR #14).
-- [ ] Validate both APIs on physical GPUs and with moving attachment roots,
-  then extend source-faithful stage dependency and publication parity.
+- [ ] Implement full animated bone-space attachments, then validate
+  source-faithful stage dependencies and publication on both native APIs.
+- [ ] After follower publication and a minimal visual consumer, qualify
+  full-frame and per-pass GPU timings on representative physical devices.
 - [ ] Build a native GPU executor for the whole source stage chain; the
   work-plan alone does not simulate hair or validate a shader port.
 
@@ -149,8 +148,9 @@ visual parity and actual consumer-GPU performance remain outstanding. See
   deterministic cross-backend fixture and source-reference comparisons.
 - Distinguish authored data from derived per-device representations.
 
-**Gate:** a moving groom runs with plausible, tested dynamics; per-pass and
-whole-frame timings exist on a qualifying physical GPU.
+**Gate:** a complete moving-groom simulation produces testable renderable
+strands on both native backends. Physical-GPU timing and visual-quality
+qualification follow with a meaningful visual consumer.
 
 ### M2 — Robust contact, authoring, integration
 

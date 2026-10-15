@@ -148,7 +148,7 @@ struct DeviceContext::Impl {
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12RootSignature> root_signature;
-    ComPtr<ID3D12PipelineState> pipeline, strand_pipeline;
+    ComPtr<ID3D12PipelineState> pipeline, strand_pipeline, velocity_shock_pipeline;
     ComPtr<ID3D12RootSignature> strand_root_signature;
     ComPtr<ID3D12CommandAllocator> diagnostic_allocator;
     ComPtr<ID3D12GraphicsCommandList> diagnostic_commands;
@@ -342,6 +342,14 @@ struct DeviceContext::Impl {
         checked(device->CreateComputePipelineState(&strand_pso,
                 IID_PPV_ARGS(strand_pipeline.GetAddressOf())),
                 "create strand-level DXIL compute pipeline");
+        const auto vsp_dxil=shader_file(path.parent_path()/"loxfx_velocity_shock.dxil");
+        D3D12_COMPUTE_PIPELINE_STATE_DESC vsp_pso{};
+        vsp_pso.pRootSignature=strand_root_signature.Get();
+        vsp_pso.CS.pShaderBytecode=vsp_dxil.data();
+        vsp_pso.CS.BytecodeLength=vsp_dxil.size();
+        checked(device->CreateComputePipelineState(&vsp_pso,
+                IID_PPV_ARGS(velocity_shock_pipeline.GetAddressOf())),
+                "create velocity-shock DXIL compute pipeline");
 
         checked(device->CreateCommandAllocator(queue_type,
                         IID_PPV_ARGS(diagnostic_allocator.GetAddressOf())),
@@ -577,6 +585,27 @@ void DeviceContext::record_strand_level(ID3D12GraphicsCommandList* cmd,
     cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
     cmd->Dispatch(g.strand_groups,1,1);
 }
+void DeviceContext::record_velocity_shock(ID3D12GraphicsCommandList* cmd,
+             const GroomState& state) const {
+    if(!impl_||!cmd||!state.impl_||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("velocity-shock pass belongs to another D3D12 context");
+    const auto& g=*state.impl_;
+    struct VspConstants {
+        std::uint32_t vertices,followers,guides,reserved;
+    };
+    const VspConstants c{g.vertices,g.followers,g.guides,0};
+    // Stage-two output must be visible before current/previous updates.
+    uav_barrier(cmd);
+    cmd->SetComputeRootSignature(impl_->strand_root_signature.Get());
+    cmd->SetPipelineState(impl_->velocity_shock_pipeline.Get());
+    cmd->SetComputeRootUnorderedAccessView(0,g.current->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(1,g.previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(2,g.root_previous_previous->GetGPUVirtualAddress());
+    cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
+    cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
+    cmd->Dispatch(g.groups,1,1);
+}
+
 ID3D12GraphicsCommandList* DeviceContext::begin_diagnostic_commands(){
     if(!impl_)throw std::logic_error("device context was moved");
     return impl_->begin();

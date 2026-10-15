@@ -4,7 +4,9 @@
 # TressFX 4.1 guide-strand simulation execution and performance trace
 
 Status: source audit and executable work-count contract, 15 October 2026.
-No GPU simulation is implemented or benchmarked yet.
+The first three stages now execute in native Vulkan and D3D12 integration
+harnesses. Complete simulation, visible quality and physical-GPU profiling
+remain subsequent milestones.
 
 ## Source references
 
@@ -143,10 +145,10 @@ OPT-003, OPT-004 and OPT-009 in
 
 ## Immediate next implementation
 
-Adapt the original six stages' GPU data layouts, host resource ownership and
-command scheduling as **one coherent Vulkan-first simulation pipeline** with
-the same source-derived strand/vertex indexing. Compile shared shader sources
-through DXC to SPIR-V and DXIL. Build a fixed animated-groom benchmark with
-GPU timestamps before replacing the solver mathematics. Investigate optional
-XPBD, inter-strand collisions and advanced rendering only against this
-measured baseline.
+Continue the existing shared-source native Vulkan/D3D12 simulation sequence
+with local-shape constraints, length/wind/collision and follower publication.
+Preserve source stage ordering and inter-pass dependencies without introducing
+a separate scheduling pipeline. Integrate a minimal visual consumer once
+renderable followers can be published, then qualify full-frame costs and
+visible quality on physical GPUs against the reference. Compare optional XPBD,
+inter-strand contacts and advanced rendering only against that baseline.

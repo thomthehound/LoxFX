@@ -315,6 +315,51 @@ int main(int argc,char** argv) {
         const auto below=context.diagnostic_read_strand_data(attached_gpu);
         require(std::abs(below[0].vsp_translation_coefficient.w-0.35f)<0.0001f,
                 "D3D12 ordinary VSP coefficient below threshold");
+        // Stage-three translation and history tests match the Vulkan fixture.
+        auto vsp_asset=fixture(0.0f,1);
+        vsp_asset.positions[1].w=0.0f;
+        auto vsp_prep=loxfx::prepare_groom(vsp_asset,{.followers_per_guide=1});
+        require(vsp_prep.has_value(),"prepare VSP D3D12 fixture");
+        auto vsp_gpu=context.prepare_diagnostic(*vsp_prep);
+        auto* vsp_cmd=context.begin_diagnostic_commands();
+        context.record_integration(vsp_cmd,vsp_gpu,
+            {.time_step=dt,.gravity=0,.damping=0,.root_translation_x=1.0f},1);
+        context.record_strand_level(vsp_cmd,vsp_gpu,
+            {.velocity_shock_coefficient=0.2f,.acceleration_threshold=0.0f});
+        context.record_velocity_shock(vsp_cmd,vsp_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto full_vsp=context.diagnostic_read_positions(vsp_gpu);
+        require(std::abs(full_vsp[0].x-1.0f)<0.0001f &&
+                std::abs(full_vsp[1].x-1.0f)<0.0001f &&
+                std::abs(full_vsp[2].x-1.0f)<0.0001f &&
+                std::abs(full_vsp[3].x-1.0f)<0.0001f,
+                "D3D12 VSP moves guide tips with accelerated scalp");
+        require(full_vsp[2].w==1.0f && full_vsp[0].w==0.0f &&
+                full_vsp[4].x==vsp_prep->rest_positions[4].x,
+                "D3D12 VSP skips followers and preserves pinned flags");
+        auto* vsp_next=context.begin_diagnostic_commands();
+        context.record_integration(vsp_next,vsp_gpu,
+            {.time_step=dt,.gravity=0,.damping=0,.root_translation_x=1.0f},1);
+        context.submit_diagnostic_and_wait();
+        const auto continued=context.diagnostic_read_positions(vsp_gpu);
+        require(std::abs(continued[2].x-1.0f)<0.0001f &&
+                std::abs(continued[3].x-1.0f)<0.0001f,
+                "D3D12 VSP updates previous-position history");
+
+        auto partial_gpu=context.prepare_diagnostic(*vsp_prep);
+        auto* partial_cmd=context.begin_diagnostic_commands();
+        context.record_integration(partial_cmd,partial_gpu,
+            {.time_step=dt,.gravity=0,.damping=0,.root_translation_x=1.0f},1);
+        context.record_strand_level(partial_cmd,partial_gpu,
+            {.velocity_shock_coefficient=0.25f,.acceleration_threshold=100.0f});
+        context.record_velocity_shock(partial_cmd,partial_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto partial_vsp=context.diagnostic_read_positions(partial_gpu);
+        require(std::abs(partial_vsp[2].x-0.25f)<0.0001f &&
+                std::abs(partial_vsp[3].x-0.25f)<0.0001f &&
+                std::abs(partial_vsp[0].x-1.0f)<0.0001f,
+                "D3D12 VSP fractional propagation preserves the attached root");
+
         // Same nonidentity quaternion fixture as Vulkan: gravity rotates a
         // movable proximal segment from +X toward -Y.
         auto tilting=fixture(0.0f,1);
@@ -334,6 +379,28 @@ int main(int argc,char** argv) {
                 tilt_data[0].vsp_quaternion.z > -0.10f &&
                 std::abs(tilt_data[0].vsp_translation_coefficient.w-0.42f)<0.0001f,
                 "D3D12 quaternion rotates +X toward -Y without coefficient override");
+        const auto before_vsp=context.diagnostic_read_positions(tilted_gpu);
+        auto* tilt_vsp=context.begin_diagnostic_commands();
+        context.record_velocity_shock(tilt_vsp,tilted_gpu);
+        context.submit_diagnostic_and_wait();
+        const auto after_vsp=context.diagnostic_read_positions(tilted_gpu);
+        const auto qrot=tilt_data[0].vsp_quaternion;
+        const auto translation=tilt_data[0].vsp_translation_coefficient;
+        for(std::uint32_t v=2;v<4;++v) {
+            const auto& input=before_vsp[v];
+            const float rx=(1-2*qrot.z*qrot.z)*input.x-2*qrot.w*qrot.z*input.y;
+            const float ry=2*qrot.w*qrot.z*input.x+(1-2*qrot.z*qrot.z)*input.y;
+            const float expected_x=input.x+translation.w*(rx+translation.x-input.x);
+            const float expected_y=input.y+translation.w*(ry+translation.y-input.y);
+            require(std::abs(after_vsp[v].x-expected_x)<0.0002f &&
+                    std::abs(after_vsp[v].y-expected_y)<0.0002f,
+                    "D3D12 VSP applies quaternion, translation, and coefficient");
+        }
+        require(after_vsp[0].x==before_vsp[0].x &&
+                after_vsp[1].x==before_vsp[1].x &&
+                after_vsp[4].x==before_vsp[4].x,
+                "D3D12 VSP skips proximal and follower positions");
+
         // Shared P2 regression fixture with Vulkan: near 180-degree
         // turns must preserve the real angle and rotate old onto new.
         for(float transverse : {0.008f,0.007f,-0.007f,0.000087f,0.0f}) {

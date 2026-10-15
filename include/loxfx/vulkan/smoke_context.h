@@ -61,6 +61,10 @@ public:
     [[nodiscard]] GroomState prepare(const PreparedGroom& source);
     // Stage 2 consumes integration outputs; records barrier and one
     // guide-strand dispatch, with no submit/wait/readback.
+    // Applies strand-level VSP transforms to guide vertices 2+.
+    // Caller records integration and strand-level calculation first.
+    void record_velocity_shock(VkCommandBuffer command_buffer,
+                               const GroomState& groom) const;
     void record_strand_level(VkCommandBuffer command_buffer,
                              const GroomState& groom,
                              const StrandMotionParameters& parameters) const;

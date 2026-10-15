@@ -175,8 +175,12 @@ unconditionally persistent upload staging.
 4. **Implemented in PR #14 internal smoke:** native D3D12 first-stage
    execution with equivalent numerical fixtures and the same HLSL. Qualify
    the full six-stage runtime and actual physical GPU behavior separately.
-5. Continue stages 2–6 only after the source host DAG/resource map is
-   satisfied and real-hardware GPU timing infrastructure exists.
+5. Continue the source-mapped stage chain with numerical tests on both
+   native backends; do not introduce a new scheduler or per-stage blocking
+   submission. Add visible follower publication and a minimal visual
+   consumer before relying on hardware profiling to choose solver or
+   rendering optimizations. Physical-GPU results remain necessary before
+   performance claims or production qualification.
 
 ## Priority and review proportionality
 

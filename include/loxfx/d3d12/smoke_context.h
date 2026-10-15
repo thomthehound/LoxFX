@@ -54,6 +54,10 @@ public:
     // Diagnostic upload waits explicitly once; NO per-stage CPU readback.
     [[nodiscard]] GroomState prepare_diagnostic(const PreparedGroom& groom);
     // Backend-native work recording: no queue submission, fence or CPU wait.
+    // Applies strand-level VSP transforms to guide vertices 2+.
+    // Caller records integration and strand-level calculation first.
+    void record_velocity_shock(ID3D12GraphicsCommandList* command_list,
+                               const GroomState& groom) const;
     void record_strand_level(ID3D12GraphicsCommandList* command_list,
                              const GroomState& groom,
                              const StrandMotionParameters& parameters) const;
