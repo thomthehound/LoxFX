@@ -268,6 +268,31 @@ int main(int argc,char** argv) {
         require(context.diagnostic_read_positions(g2)[0].y==5.0f,
                 "D3D12 other groom roots stay independent");
 
+        // Both proximal vertices attached: the reference strand-motion
+        // solver reads their rotation/translation basis across frames.
+        auto attached=fixture(0.0f,1);
+        attached.positions[1].w=0.0f;
+        auto attached_prepared=loxfx::prepare_groom(
+            attached,{.followers_per_guide=1});
+        require(attached_prepared.has_value(),"prepare attached-root D3D12 fixture");
+        auto attached_gpu=context.prepare_diagnostic(*attached_prepared);
+        for(float displacement : {0.25f,0.75f,1.25f}) {
+            auto* motion=context.begin_diagnostic_commands();
+            context.record_integration(motion,attached_gpu,
+                {.time_step=dt,.gravity=g,.damping=0,
+                 .root_translation_x=displacement},1);
+            context.submit_diagnostic_and_wait();
+            const auto pos=context.diagnostic_read_positions(attached_gpu);
+            require(std::abs(pos[0].x-displacement)<0.0001f &&
+                    std::abs(pos[1].x-displacement)<0.0001f &&
+                    pos[0].y==0.0f && pos[1].y==1.0f,
+                    "D3D12 attached proximal guide vertices translate rigidly");
+        }
+        const auto anchored_history=context.diagnostic_read_root_history(attached_gpu);
+        require(std::abs(anchored_history[0].x-0.25f)<0.0001f &&
+                std::abs(anchored_history[1].x-0.25f)<0.0001f,
+                "D3D12 compact history preserves both older attachment positions");
+
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
                  <<"\nTwo-groom first-stage batch GPU ms: "<<gpu_ms
