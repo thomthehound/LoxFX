@@ -61,5 +61,15 @@ jobs:
           engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
           test -n "$engine"
           chmod +x "$engine"
-          "$engine" --headless --path "$project" --editor --import --quit
+          mkdir -p build/godot-engine/empty
+          printf 'config_version=5\n' > build/godot-engine/empty/project.godot
+          "$engine" --headless --path build/godot-engine/empty --editor --import --quit
+          if ! "$engine" --headless --path "$project" --editor --import --quit; then
+            echo "::error::Godot aborted while importing the extension smoke project"
+            if command -v gdb >/dev/null; then
+              gdb -batch -ex "set pagination off" -ex run -ex "thread apply all bt 25" \
+                --args "$engine" --headless --path "$project" --editor --import --quit || true
+            fi
+            exit 1
+          fi
           timeout 120s "$engine" --headless --path "$project" --script res://runtime_smoke.gd
