@@ -139,9 +139,11 @@ unconditionally persistent upload staging.
 1. **Implemented in draft PR:** retain shader/compute smoke tests while
    excluding the prototype backend library and headers from installed
    SDK exports. Do not merge a permanent per-groom runtime API.
-2. Establish explicit backend device context (owned standalone or
-   borrowed from host), RAII and *two grooms on one device*. Fault-test
-   failed resource creation with no invalid destruction.
+2. **Implemented in the internal experimental runner:** an explicit
+   standalone/borrowed backend device context, separate per-groom state,
+   failure-safe owned Vulkan output handles, and *two grooms on one device*.
+   Still needed: fault-injected resource-creation failures, external-device
+   integration tests, concurrency/lifetime checks and production scheduler.
 3. Separate stage command **recording** from queue **submission**.
    Use host-controlled dispatch and diagnostic readback, retaining
    source-derived synchronization. Test initial upload, two grooms,

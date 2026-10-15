@@ -97,7 +97,7 @@ if(LOXFX_BUILD_VULKAN_SMOKE)
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
     VERBATIM)
   add_custom_target(loxfx_integration_shader DEPENDS "${LOXFX_INTEGRATION_SPV}")
-  add_library(loxfx_vulkan_smoke STATIC src/vulkan/integration.cpp)
+  add_library(loxfx_vulkan_smoke STATIC src/vulkan/smoke_context.cpp)
   add_dependencies(loxfx_vulkan_smoke loxfx_integration_shader)
   target_link_libraries(loxfx_vulkan_smoke PUBLIC LoxFX::Core PRIVATE Vulkan::Vulkan)
   target_compile_features(loxfx_vulkan_smoke PUBLIC cxx_std_23)

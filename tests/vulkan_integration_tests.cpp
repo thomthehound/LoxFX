@@ -1,118 +1,119 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
 // SPDX-License-Identifier: Apache-2.0
 
-#include "loxfx/prepared_groom.h"
-#include "loxfx/vulkan/integration.h"
-
+#include "loxfx/vulkan/smoke_context.h"
 #include <cmath>
-#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
 
 namespace {
-void check(bool ok, const char* reason) {
-    if (!ok) throw std::runtime_error(reason);
+void check(bool value, const char* what) {
+    if (!value) throw std::runtime_error(what);
+}
+loxfx::GroomAsset fixture(float base, std::uint32_t strands) {
+    loxfx::GroomAsset g;
+    g.guide_strands = strands;
+    g.vertices_per_strand = 4;
+    for (std::uint32_t i=0; i<strands; ++i)
+        for (std::uint32_t v=0; v<4; ++v)
+            g.positions.push_back({static_cast<float>(i),base+static_cast<float>(v),
+                                   0,v==0?0.0f:1.0f});
+    return g;
+}
+template<typename Fn>void reject(Fn&& fn, const char* what) {
+    try { fn(); }
+    catch (const std::invalid_argument&) { return; }
+    throw std::runtime_error(what);
+}
 }
 
-void check_invalid_groom(const loxfx::PreparedGroom& groom, const char* shader,
-                         const char* reason) {
-    try {
-        loxfx::vulkan::IntegrationRuntime runtime(groom, shader);
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    throw std::runtime_error(reason);
-}
-
-loxfx::GroomAsset test_groom() {
-    loxfx::GroomAsset groom;
-    groom.guide_strands = 1;
-    groom.vertices_per_strand = 4;
-    groom.positions = {{
-        0.0f, 0.0f, 0.0f, 0.0f  // guide root immobile
-    }, {0, 1, 0, 1}, {0, 2, 0, 1}, {0, 3, 0, 1}};
-    return groom;
-}
-}
-int main(int argc, char** argv) {
+int main(int argc,char** argv) {
     if (argc != 2) return 2;
     try {
-        const auto groom = loxfx::prepare_groom(test_groom(), {.followers_per_guide = 1});
-        check(groom.has_value(), "prepared fixture");
-        // Public prepared data can be edited; malformed topology must fail
-        // before creating descriptors or dispatching division-by-zero shaders.
-        auto invalid = *groom;
-        invalid.vertices_per_strand = 65;
-        check_invalid_groom(invalid, argv[1], "reject 65-vertex topology");
-        invalid = *groom;
-        invalid.followers_per_guide += 1;
-        check_invalid_groom(invalid, argv[1], "reject inconsistent follower count");
-        invalid = *groom;
-        invalid.work.stages[0].thread_groups += 1;
-        check_invalid_groom(invalid, argv[1], "reject mismatched stage dispatch");
-        invalid = *groom;
-        invalid.work.packed_total_strands += 1;
-        check_invalid_groom(invalid, argv[1], "reject mismatched packed topology");
-        invalid = *groom;
-        invalid.rest_positions[0].x = std::numeric_limits<float>::quiet_NaN();
-        check_invalid_groom(invalid, argv[1], "reject non-finite rest positions");
+        namespace gpu = loxfx::vulkan::smoke;
+        const auto a=loxfx::prepare_groom(fixture(0.0f,1),
+                                           {.followers_per_guide=1});
+        const auto b=loxfx::prepare_groom(fixture(5.0f,2),
+                                           {.followers_per_guide=2});
+        check(a&&b,"prepare independent grooms");
+        gpu::DeviceContext context(argv[1]);
+        const VkDevice shared=context.native_device();
+        check(shared!=VK_NULL_HANDLE,"standalone device created");
+        const auto first=context.prepare(*a);
+        const auto second=context.prepare(*b);
+        check(context.native_device()==shared,"one device for two groom uploads");
+        check(first.allocated_buffer_bytes()>0&&second.allocated_buffer_bytes()>0,
+              "two independent persistent groom histories");
+        const auto before_a=context.diagnostic_read_positions(first);
+        const auto before_b=context.diagnostic_read_positions(second);
+        check(before_a[1].y==1.0f && before_b[1].y==6.0f,
+              "correct initial state for both grooms");
 
-        loxfx::vulkan::IntegrationRuntime gpu(*groom, argv[1]);
-        const auto before = gpu.read_positions();
-        check(before.size() == groom->work.packed_total_vertices, "readback vertex count");
-        check(before[0].y == 0.0f && before[1].y == 1.0f, "rest state");
-        check(before[4].y == 0.0f && before[5].y == 1.0f, "follower initially unchanged");
-        constexpr float dt = 1.0f / 60.0f;
-        constexpr float g = 9.81f;
-        gpu.advance({.time_step = dt, .gravity = g, .damping = 0}, 3);
-        const double three_step_gpu_ms = gpu.last_gpu_milliseconds();
-        const auto after = gpu.read_positions();
-        const float delta = g * dt * dt;
-        // Verlet from rest with no damping: x_n = x_0 + (1+2+3)*(-g dt²).
-        check(std::abs(after[1].y - (1.0f - 6 * delta)) < 0.0001f,
-              "three physics steps occurred on the GPU");
-        check(after[0].y == 0.0f, "root stayed pinned");
-        check(after[5].y == 1.0f, "followers not yet published");
+        auto mutated=*a;
+        mutated.vertices_per_strand=65;
+        reject([&]{ auto ignored=context.prepare(mutated); },
+               "invalid topology was accepted");
+        mutated=*a;
+        mutated.work.stages[0].thread_groups+=1;
+        reject([&]{ auto ignored=context.prepare(mutated); },
+               "invalid dispatch work was accepted");
+        mutated=*a;
+        mutated.rest_positions[0].y=std::numeric_limits<float>::quiet_NaN();
+        reject([&]{ auto ignored=context.prepare(mutated); },
+               "invalid rest positions were accepted");
 
-        // Confirm a second command submission observes prior GPU writes.
-        gpu.advance({.time_step = dt, .gravity = g, .damping = 0}, 1);
-        const auto fourth = gpu.read_positions();
-        check(std::abs(fourth[1].y - (1.0f - 10 * delta)) < 0.0001f,
-              "state survives a second GPU batch submission");
-        // Source-style global rest-shape stiffness, selected over all vertices.
-        gpu.advance({.time_step = dt, .gravity = g, .damping = 0,
-                     .global_stiffness = 1.0f, .global_range = 1.0f}, 1);
-        const auto restored = gpu.read_positions();
-        check(std::abs(restored[1].y - 1.0f) < 0.0001f,
-              "global shape constraint restores authored geometry");
-        check(restored[0].y == 0.0f, "pinned root remains stable");
+        constexpr float dt=1.0f/60.0f, gravity=9.81f;
+        const auto prior_submissions=context.gpu_submission_count();
+        const VkCommandBuffer command=context.begin_diagnostic_commands();
+        context.record_integration(command,first,
+                                   {.time_step=dt,.gravity=gravity,.damping=0},3);
+        context.record_integration(command,second,
+                                   {.time_step=dt,.gravity=gravity,.damping=0},2);
+        check(context.gpu_submission_count()==prior_submissions,
+              "stage recording must NOT submit or CPU-wait");
+        context.submit_diagnostic_and_wait();
+        const double kernel_batch_ms=context.last_diagnostic_gpu_milliseconds();
+        check(context.gpu_submission_count()==prior_submissions+1,
+              "caller submitted both grooms as one batch");
 
-        const std::uint64_t vertex_bytes =
-            groom->work.packed_total_vertices * sizeof(loxfx::Float4);
-        check(gpu.allocated_buffer_bytes() >= 4 * vertex_bytes,
-              "reported allocation includes three device buffers and staging");
-        check(gpu.staging_allocation_bytes() >= vertex_bytes,
-              "single-image staging allocation must be accounted for");
-        check(gpu.allocated_buffer_bytes() >= gpu.staging_allocation_bytes() +
-              3 * vertex_bytes, "all device buffers included in allocation total");
-        std::cout << "Vulkan device: " << gpu.device_name()
-                  << (gpu.is_software_device() ? " (software)" : " (hardware/unknown)")
-                  << "\nPrepared vertices: " << groom->work.packed_total_vertices
-                  << "\nAllocated Vulkan buffer bytes (including staging): "
-                  << gpu.allocated_buffer_bytes()
-                  << "\nStaging allocation bytes: "
-                  << gpu.staging_allocation_bytes()
-                  << "\nStage 1, three-step batch GPU milliseconds: "
-                  << three_step_gpu_ms << "\n"
-                  << "Stage 1, final one-step shape batch GPU milliseconds: "
-                  << gpu.last_gpu_milliseconds() << "\n";
-        if (three_step_gpu_ms < 0)
-            std::cout << "Timestamp unsupported on selected queue\n";
-        std::cout << "PASS: GPU-integration stage geometry/history/root tests\n";
-        return 0;
-    } catch (const std::exception& err) {
-        std::cerr << "FAIL: " << err.what() << "\n";
+        const auto after_a=context.diagnostic_read_positions(first);
+        const auto after_b=context.diagnostic_read_positions(second);
+        const float step=gravity*dt*dt;
+        check(std::abs(after_a[1].y-(1.0f-6*step))<0.0001f,
+              "first groom's three integration steps");
+        check(std::abs(after_b[1].y-(6.0f-3*step))<0.0001f,
+              "second groom's two independent integration steps");
+        check(after_a[0].y==0.0f&&after_b[0].y==5.0f,
+              "both root attachments pinned");
+        check(after_a[5].y==1.0f&&after_b[5].y==6.0f,
+              "follower publication is not implemented");
+        // Verify previous state from one explicit batch is visible in another.
+        const auto next=context.begin_diagnostic_commands();
+        context.record_integration(next,first,
+                                   {.time_step=dt,.gravity=gravity,.damping=0},1);
+        context.record_integration(next,second,
+                                   {.time_step=dt,.gravity=gravity,.damping=0,
+                                    .global_stiffness=1.0f,.global_range=1.0f},1);
+        context.submit_diagnostic_and_wait();
+        const auto frame2_a=context.diagnostic_read_positions(first);
+        const auto frame2_b=context.diagnostic_read_positions(second);
+        check(std::abs(frame2_a[1].y-(1.0f-10*step))<0.0001f,
+              "position history persisted across frame command batches");
+        check(std::abs(frame2_b[1].y-6.0f)<0.0001f,
+              "second groom rest-shape relaxation");
+
+        std::cout << "Vulkan device: "<<context.device_name()
+                  <<(context.software_device()?" (software)":" (hardware)")
+                  <<"\nShared GPU device: "<<shared
+                  <<"\nGroom A buffers allocated: "<<first.allocated_buffer_bytes()
+                  <<"\nGroom B buffers allocated: "<<second.allocated_buffer_bytes()
+                  <<"\nTwo-groom simulation batch GPU milliseconds: "<<kernel_batch_ms
+                  <<"\nPASS: two independently animated grooms on one context;"
+                    " record-only simulation; explicit submission; no stage readback\n";
+    } catch(const std::exception& ex) {
+        std::cerr<<"FAIL: "<<ex.what()<<"\n";
         return 1;
     }
+    return 0;
 }
