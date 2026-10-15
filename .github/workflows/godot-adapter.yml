@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: Godot adapter compile
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gdextension:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Checkout compatible godot-cpp bindings
+        uses: actions/checkout@v7
+        with:
+          repository: godotengine/godot-cpp
+          ref: master
+          path: external/godot-cpp
+          persist-credentials: false
+      - name: Configure optional GDExtension
+        run: >
+          cmake -S . -B build/godot
+          -DBUILD_TESTING=ON
+          -DLOXFX_BUILD_TOOLS=ON
+          -DLOXFX_BUILD_GODOT_ADAPTER=ON
+          -DLOXFX_GODOT_CPP_SOURCE_DIR=${{ github.workspace }}/external/godot-cpp
+          "-DGODOTCPP_API_VERSION=4.7"
+          -DGODOTCPP_TARGET=template_release
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Compile Godot adapter and core consumers in one CMake build
+        run: cmake --build build/godot --config Release --target loxfx_godot loxfx_tfx_inspect loxfx_prepared_groom_tests --parallel 2
+      - name: Execute prepared-groom core test in adapter-enabled build
+        run: ctest --test-dir build/godot -C Release -R loxfx_prepared_groom --output-on-failure
+      - name: Descriptor generated for opt-in Godot project
+        shell: bash
+        run: test -s build/godot/loxfx.gdextension
+      - name: Verify native extension loads and can update a real groom
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=adapters/godot/tests
+          mkdir -p "$project/addons/loxfx/bin" "$project/grooms" build/godot-engine
+          cp build/godot/loxfx.gdextension "$project/addons/loxfx/loxfx.gdextension"
+          # An editor import normally generates this list. In a clean
+          # headless runtime project, explicitly register the extension;
+          # otherwise game mode can start without loading its native class.
+          mkdir -p "$project/.godot"
+          printf 'res://addons/loxfx/loxfx.gdextension\n' > "$project/.godot/extension_list.cfg"
+          library="$(find build/godot/adapters/godot -name 'libloxfx_godot.so' -print -quit)"
+          test -n "$library"
+          cp "$library" "$project/addons/loxfx/bin/libloxfx_godot.so"
+          curl --fail --location --retry 3 --output "$project/grooms/Ratboy_mohawk.tfx" \
+            https://raw.githubusercontent.com/thomthehound/TressFX/master/bin/Objects/HairAsset/Ratboy/Ratboy_mohawk.tfx
+          curl --fail --location --retry 3 --output build/godot-engine/godot.zip \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -q build/godot-engine/godot.zip -d build/godot-engine
+          engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
+          test -n "$engine"
+          chmod +x "$engine"
+          # Invoke game-runtime mode directly. A fresh project's editor
+          # --import --quit path can abort on an upstream Godot GDExtension
+          # documentation shutdown race (godotengine/godot#111048).
+          # The real integration gate is class registration and dynamic mesh
+          # publication in a running SceneTree, not a rushed editor teardown.
+          if ! timeout 120s "$engine" --headless --path "$project" \
+              --script res://runtime_smoke.gd; then
+            echo "::error::Native Godot adapter failed its runtime smoke"
+            if command -v gdb >/dev/null; then
+              gdb -batch -ex "set pagination off" -ex run \
+                -ex "thread apply all bt 25" --args "$engine" --headless \
+                --path "$project" --script res://runtime_smoke.gd || true
+            fi
+            exit 1
+          fi

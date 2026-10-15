@@ -48,6 +48,15 @@ and a minimal visual consumer of the published GPU buffers. Physical-GPU
 profiling and matched reference-scene comparisons will then guide performance
 and rendering improvements.
 
+## Godot engine adapter (opt-in)
+
+A new, independently packaged GDExtension can import and prepare TressFX grooms
+and display packed guide/follower positions in Godot using a diagnostic line
+mesh. The generic Godot node is **not tied to Godauldron**. Native GPU
+simulation, production strand shading and zero-copy rendering remain separate
+integration milestones; do not benchmark the diagnostic CPU upload path as a
+GPU renderer. See [Godot adapter](adapters/godot/README.md).
+
 ## Build the core
 
 Requirements: **CMake 3.28+** and a **C++23 compiler and standard library**

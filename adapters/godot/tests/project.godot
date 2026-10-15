@@ -1,0 +1,12 @@
+; Minimal Godot project for the native GDExtension runtime smoke test.
+config_version=5
+
+[application]
+config/name="LoxFX Godot adapter runtime smoke"
+
+[native_extensions]
+paths=PackedStringArray("res://addons/loxfx/loxfx.gdextension")
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
