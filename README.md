@@ -52,7 +52,9 @@ and rendering improvements.
 
 A new, independently packaged GDExtension can import and prepare TressFX grooms
 and display packed guide/follower positions in Godot using a diagnostic line
-mesh. The generic Godot node is **not tied to Godauldron**. Native GPU
+mesh. With an explicit native opt-in it can also drive the **actual Vulkan or
+D3D12 LoxFX simulation** and publish the GPU output through a blocking
+diagnostic CPU snapshot. The generic Godot node is **not tied to Godauldron**. Native GPU
 simulation, production strand shading and zero-copy rendering remain separate
 integration milestones; do not benchmark the diagnostic CPU upload path as a
 GPU renderer. See [Godot adapter](adapters/godot/README.md).
