@@ -56,19 +56,20 @@ C++23 requirement. The public ABI is not yet frozen.
 experimental compute harness, **not a shipping runtime API**. The current
 per-groom device ownership has now been replaced with **one shared Vulkan
 context, separate per-groom buffers and caller-recorded command batches**.
-Native D3D12 stage-one execution is now being validated alongside Vulkan;
+Native D3D12 executes the first two shared HLSL stages alongside Vulkan;
 production scheduler, quality and physical-GPU profiling must still pass
 before either becomes an installed SDK interface. See
 [the GPU runtime architecture decision](docs/GPU_RUNTIME_ARCHITECTURE.md)
 and [issue #13](https://github.com/thomthehound/LoxFX/issues/13).
 
 
-A native Vulkan module can compile and execute the **first** TressFX-inspired
-simulation stage on persistent GPU buffers. It tests static-root Verlet
-integration with explicit command submission, GPU memory barriers, diagnostic
-readback and device timestamps. **It is not yet a six-stage hair simulator**;
-bone skinning, full constraint solving, collisions and follower publication
-remain pending.
+The internal Vulkan harness now executes **two** source-derived stages:
+moving-root Verlet/global shape integration and per-guide strand-level
+motion data. Both use persistent GPU resources, host-controlled submission,
+explicit inter-stage barriers and optional diagnostic readback/timestamps.
+**This is not yet a complete six-stage hair simulator**; bone skinning,
+velocity-shock application, constraints, collision and follower publication
+remain pending. See [stage-two scope](docs/STRAND_MOTION_STAGE.md).
 
 Build with the Vulkan SDK and an installed DXC executable:
 
@@ -92,9 +93,11 @@ are shared. Windows CI compiles the same stage to D3D12 DXIL and Vulkan SPIR-V.
 **Native D3D12 now executes that DXIL through an actual D3D12 compute
 pipeline** in Windows WARP CI, with independent grooms, root descriptors,
 root constants, host-recorded command lists, fence synchronization and
-timestamps. This is first-stage functionality, not a complete simulator.
+timestamps. PR #16 also executes the second, per-guide strand-motion stage using the
+same HLSL as Vulkan. This is a functional two-stage proof, not a full
+hair simulator or measured GPU performance comparison.
 
-Build the internal native D3D12 stage-one test with the Windows SDK and DXC:
+Build the internal native D3D12 two-stage test with the Windows SDK and DXC:
 
 ```powershell
 cmake -S . -B build/d3d12 -A x64 -DLOXFX_BUILD_D3D12_SMOKE=ON -DBUILD_TESTING=ON
