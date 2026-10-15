@@ -36,8 +36,9 @@ important decisions across sessions.
    analytical estimates), prerequisite stage, next experiment, priority,
    status and testable acceptance criteria. Reference source commits,
    issues and measurements where possible.
-3. Open/link a GitHub Issue for actionable larger tasks. Do not create
-   duplicate entries or issues for the same opportunity.
+3. Open/link a GitHub Issue for major actionable work. Blocked research
+   candidates can remain backlog-only until their prerequisite is met;
+   avoid premature or duplicate issues for speculative experiments.
 4. Before each performance PR, read the backlog and update any relevant
    entry. Mark `done` only after a correctness check and meaningful
    physical-GPU measurements; otherwise use `implemented-awaiting-measurement`.

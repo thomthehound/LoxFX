@@ -8,6 +8,8 @@ deferred or active performance opportunities. Update it at discovery and before
 every substantial handoff as specified in [AGENTS.md](../AGENTS.md).
 `docs/ROADMAP.md` tracks milestones; this file tracks optimization leads.
 
+Blocked research candidates need no separate GitHub issue until actionable; substantial active work has one linked issue. Promote candidates when prerequisites are met; avoid creating ten speculative issue threads.
+
 Status: `candidate`, `blocked`, `ready`, `testing`,
 `implemented-awaiting-measurement`, `done`, `rejected`.
 A claim about launch counts, theoretical saved bytes, or another project's
@@ -52,6 +54,9 @@ equivalence on real assets. Keep any required follower render output.
 **Prerequisite:** first GPU storage/binding implementation.
 **Status:** blocked. **Source:** [PR #3](https://github.com/thomthehound/LoxFX/pull/3).
 
+**Evidence / source:** `src/prepared_groom.cpp`; six master-index shaders and follower expansion in the TressFX 4.1 reference; [PR #3](https://github.com/thomthehound/LoxFX/pull/3).
+**Acceptance:** same authored/style/pinning behavior, collision and renderer compatibility, with measured lower static GPU residency or transfer cost and no unacceptable frame-time increase. Compare representative 0/1/3-follower assets.
+
 ## OPT-002 — Full-size dynamic follower history
 
 **Observation:** The source integration and VSP shaders use only master
@@ -64,6 +69,9 @@ positions/tangents with full history. Validate behavior at 0/1/3+
 followers, VRAM and frame time.
 
 **Prerequisite:** dynamic resource ownership design. **Status:** blocked.
+
+**Evidence / source:** TressFX 4.1 `TressFXHairObject.cpp` dynamic-state allocation and `TressFXSimulation.hlsl` master-index passes. **Suspected cost:** potentially large history buffers proportional to followers; unquantified until live buffer inventory is measured.
+**Acceptance:** reset, motion/contact and publication correctness with lower measured VRAM/upload requirements or reduced bandwidth, no new readbacks and no unacceptable frame-time regression. [Issue #7](https://github.com/thomthehound/LoxFX/issues/7).
 
 ## OPT-003 — Stage-major scheduling and unnecessary synchronization
 
@@ -79,6 +87,9 @@ delete a synchronization dependency based on a theoretical speedup.
 **Prerequisite:** correct GPU executor. **Status:** blocked.
 **Source:** [simulation execution trace](SIMULATION_EXECUTION_TRACE.md).
 
+**Evidence / source:** TressFX 4.1 `TressFXSimulation.cpp::Simulate` and `DispatchComputeShader`; [source synchronization trace](SIMULATION_EXECUTION_TRACE.md). **Suspected cost:** per-object dispatch/bind/barrier overhead and stalls; not quantified.
+**Acceptance:** validated cross-pass visibility, multi-groom parity and demonstrably lower measured CPU submission or GPU frame time with stable animation. [Issue #8](https://github.com/thomthehound/LoxFX/issues/8).
+
 ## OPT-004 — Wave/subgroup topology
 
 **Observation:** Source uses 64-thread workgroups and strand layouts tied
@@ -91,6 +102,9 @@ barriers and divergence. Select at device preparation, not per dispatch.
 
 **Prerequisite:** running shaders and timings. **Status:** blocked.
 
+**Evidence / source:** TressFX 4.1 `TressFXSimulation.hlsl` (`THREAD_GROUP_SIZE=64`, group-shared arrays and barrier sites), `TressFXConstantBuffers.h`. **Suspected cost:** subgroup underutilization, occupancy or shared-memory pressure; not measured and may be zero on many GPUs.
+**Acceptance:** correct layout/synchronization and repeatably lower per-stage **and** whole-frame GPU time on a documented supported GPU; retain the baseline if alternatives lose. No issue while awaiting shader/hardware baseline.
+
 ## OPT-005 — GPU-driven LOD and visibility
 
 **Observation:** Guides/followers receive simulation work regardless of
@@ -101,6 +115,9 @@ follower count, update frequency, culling and indirect dispatch in a real
 multi-groom scene; avoid perceptible popping and unstable contacts.
 
 **Prerequisite:** scene and baseline renderer. **Status:** blocked.
+
+**Evidence / source:** stage/guide/follower work-count model `src/simulation_work.cpp`, [execution trace](SIMULATION_EXECUTION_TRACE.md). **Suspected cost:** offscreen/distant groom updates scale with unchanged guide counts; scene-level cost not measured.
+**Acceptance:** benchmarked frame-time reduction at controlled visual error, no visible temporal LOD popping or contact regressions, plus stable reentry after culling. [Issue #9](https://github.com/thomthehound/LoxFX/issues/9).
 
 ## OPT-006 — Reuse and update SDF collision efficiently
 
@@ -113,6 +130,9 @@ per-collider ownership, reuse/rebuild only where valid, test multi-groom
 penetration and measure dispatches, bandwidth and latency.
 
 **Prerequisite:** working collision pipeline. **Status:** blocked.
+
+**Evidence / source:** TressFX 4.1 `TressFXSDFCollision.cpp`, `TressFXSDFCollision.hlsl`, [upstream issue #46](https://github.com/GPUOpen-Effects/TressFX/issues/46). **Suspected cost:** repeated SDF compute/transitions for unchanged geometry and risk of constant-buffer cross-talk; unmeasured.
+**Acceptance:** no multi-groom corruption, bounded penetration under animation, fewer measured unnecessary SDF builds/transfers and equal or lower full-frame GPU time. [Issue #10](https://github.com/thomthehound/LoxFX/issues/10).
 
 ## OPT-007 — Constraint iteration work
 
@@ -127,6 +147,9 @@ safe fusion and convergence-aware iteration counts with timestamps.
 **Prerequisite:** functioning solver. **Status:** blocked.
 **Source:** [simulation execution trace](SIMULATION_EXECUTION_TRACE.md).
 
+**Evidence / source:** `LocalShapeConstraints` and `LengthConstriantsWindAndCollision` in TressFX 4.1 `TressFXSimulation.hlsl`; 64-vertex iteration discrepancy in [execution trace](SIMULATION_EXECUTION_TRACE.md). **Suspected cost:** host dispatches or synchronization per iteration; not quantified.
+**Acceptance:** source-intended constraint convergence/length error and temporal stability with lower measured stage/full-frame cost, or explicit rejection. Open a dedicated issue when the correct solver is running.
+
 ## OPT-008 — Storage compression
 
 **Observation:** float4 state and tangents may impose avoidable bandwidth.
@@ -138,6 +161,9 @@ and tight contact; include numerical error, VRAM and full-frame GPU latency.
 Never require reduced precision as the only baseline.
 
 **Prerequisite:** real GPU correctness oracle. **Status:** blocked.
+
+**Evidence / source:** source `float4` position/tangent history layouts in TressFX 4.1 and `include/loxfx/prepared_groom.h`. **Suspected cost:** FP32 bandwidth and memory traffic; format suitability unknown and presently unmeasured.
+**Acceptance:** validated bounded positional/tangent error, collision correctness and repeatably lower device traffic and frame time on representative real GPUs. Keep FP32 if mixed precision loses. Open issue when a precision/bandwidth bottleneck is demonstrated.
 
 ## OPT-009 — Prove guide-only launch benefits
 
@@ -152,6 +178,9 @@ out-of-bounds source groups. Record comparisons, driver and memory behavior.
 
 **Prerequisite:** working GPU backend. **Status:** implemented-awaiting-measurement.
 
+**Evidence / source:** `src/simulation_work.cpp`, real AMD Ratboy smoke tests, [PR #2](https://github.com/thomthehound/LoxFX/pull/2). **Suspected cost:** 2–4× excess *logical lanes* in reference workloads and an extra block for aligned guide counts; GPU time remains unmeasured.
+**Acceptance:** a safe, genuinely GPU-executed reference comparison that quantifies per-pass/full-frame timing and keeps guide/follower quality and output equivalent. Runtime tracked by [issue #6](https://github.com/thomthehound/LoxFX/issues/6).
+
 ## OPT-010 — Better visible followers per simulated guide
 
 **Observation:** Source root offsets are inexpensive but imperfect for
@@ -164,6 +193,9 @@ memory and perceptual error. See
 [modernization research](MODERNIZATION_RESEARCH.md).
 
 **Prerequisite:** visual and performance baseline. **Status:** blocked.
+
+**Evidence / source:** TressFX 4.1 `UpdateFollowHairVertices` linear root-offset formula; physically guided interpolation approaches described in [modernization research](MODERNIZATION_RESEARCH.md). **Suspected cost:** additional computation could increase runtime; possible fidelity-per-guide gain unmeasured.
+**Acceptance:** documented visual-motion improvement at controlled simulated guide count with practical full-frame performance on consumer GPU hardware. Open dedicated issue after a visual baseline and style fixtures exist.
 
 ## Evidence and handoff log
 
