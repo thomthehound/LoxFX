@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: Native D3D12 integration stage
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  d3d12-warp-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install official Windows DXC
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
+          $dest = Join-Path $env:RUNNER_TEMP 'dxc'
+          Invoke-WebRequest -Uri 'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dest
+          $compiler = Get-ChildItem -Path $dest -Recurse -Filter 'dxc.exe' |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+            Select-Object -First 1
+          if (!$compiler) { throw "DXC x64 not found" }
+          "LOXFX_DXC=$($compiler.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Configure native D3D12 test
+        shell: pwsh
+        run: |
+          cmake -S . -B build/d3d12 -A x64 -DBUILD_TESTING=ON -DLOXFX_BUILD_D3D12_SMOKE=ON "-DLOXFX_DXC_EXECUTABLE=$env:LOXFX_DXC"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build native D3D12 runtime and DXIL
+        run: cmake --build build/d3d12 --config Release --parallel 2
+      - name: Execute actual compute through D3D12 WARP
+        run: ctest --test-dir build/d3d12 -C Release -R '^loxfx_d3d12_integration$' --output-on-failure -V
+      - name: Confirm prototype not installed as SDK
+        shell: pwsh
+        run: |
+          cmake --install build/d3d12 --config Release --prefix "$env:RUNNER_TEMP/loxfx-installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path "$env:RUNNER_TEMP/loxfx-installed/include/loxfx/d3d12") {
+            throw "Experimental D3D12 header leaked into public SDK"
+          }
+          $target = Get-ChildItem "$env:RUNNER_TEMP/loxfx-installed" -Recurse -Filter LoxFXTargets.cmake | Select-Object -First 1
+          if (!$target) { throw "Installed target export missing" }
+          if ((Get-Content $target.FullName -Raw) -match 'd3d12_smoke') {
+            throw "Experimental D3D12 target leaked into public SDK"
+          }
