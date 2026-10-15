@@ -27,6 +27,17 @@ jobs:
         run: cmake --build build --config Release --parallel 2
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Reference TressFX 4.1 groom smoke (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/Ratboy_mohawk.tfx" \
+            https://raw.githubusercontent.com/thomthehound/TressFX/master/bin/Objects/HairAsset/Ratboy/Ratboy_mohawk.tfx
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/Ratboy_short.tfx" \
+            https://raw.githubusercontent.com/thomthehound/TressFX/master/bin/Objects/HairAsset/Ratboy/Ratboy_short.tfx
+          ./build/loxfx_tfx_inspect "$RUNNER_TEMP/Ratboy_mohawk.tfx" 3
+          ./build/loxfx_tfx_inspect "$RUNNER_TEMP/Ratboy_short.tfx" 1
       - name: Install
         run: cmake --install build --config Release --prefix "${{ github.workspace }}/build/package"
       - name: Configure downstream consumer
