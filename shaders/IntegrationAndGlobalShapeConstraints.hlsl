@@ -24,8 +24,9 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
 // THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-// This initial stage tests pinned roots, Verlet integration, and global
-// rest-shape matching on STATIC attachments, not the complete six-stage port.
+// This experimental first stage tests pinned/moving translated attachments,
+// Verlet integration, and global rest-shape matching. It is NOT skeletal
+// skinning or the complete six-stage simulation.
 
 struct Parameters {
     uint vertices_per_strand;
@@ -37,9 +38,9 @@ struct Parameters {
     float damping;
     float global_stiffness;
     float global_range;
-    float reserved1;
-    float reserved2;
-    float reserved3;
+    float root_translation_x;
+    float root_translation_y;
+    float root_translation_z;
 };
 // Identical integration maths for DXIL/D3D12 and SPIR-V/Vulkan. The parameter
 // transport differs: Vulkan push constants vs. D3D12 CBV/root constants.
@@ -55,6 +56,9 @@ struct Parameters {
 LOXFX_BINDING(0) RWStructuredBuffer<float4> current_positions : register(u0, space0);
 LOXFX_BINDING(1) RWStructuredBuffer<float4> previous_positions : register(u1, space0);
 LOXFX_BINDING(2) StructuredBuffer<float4> rest_positions : register(t2, space0);
+// Two proximal vertices per guide supply the previous-previous history
+// needed by CalculateStrandLevelData. Do not allocate follower history.
+LOXFX_BINDING(3) RWStructuredBuffer<float4> root_previous_previous : register(u3, space0);
 
 [numthreads(64, 1, 1)]
 void IntegrationAndGlobalShapeConstraints(
@@ -71,6 +75,9 @@ void IntegrationAndGlobalShapeConstraints(
     float4 current = current_positions[index];
     float4 previous = previous_positions[index];
     float4 rest = rest_positions[index];
+    rest.xyz += float3(params.root_translation_x,
+                       params.root_translation_y,
+                       params.root_translation_z);
     float4 next = current;
     if (current.w > 0.0f) {
         float decay = exp(-params.damping * params.time_step * 60.0f);
@@ -83,8 +90,13 @@ void IntegrationAndGlobalShapeConstraints(
             next.xyz += params.global_stiffness * (rest.xyz - next.xyz);
         }
     } else {
-        next = rest; // immovable scalp attachment, static for now
+        next = rest; // pinned scalp attachment follows the host translation
     }
+    // Reference UpdateFinalVertexPositions saves the older previous state
+    // before updating it. Only the two guide-root vertices are consumed by
+    // the forthcoming strand-level pass.
+    if (local_vertex < 2u)
+        root_previous_previous[guide * 2u + local_vertex] = previous;
     previous_positions[index] = current;
     current_positions[index] = next;
 }

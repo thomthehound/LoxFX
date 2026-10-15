@@ -232,6 +232,60 @@ int main(int argc,char** argv) {
         check(std::abs(host_after[1].y-(1.0f-15*step))<0.0001f,
               "externally submitted commands advance the same GPU history");
 
+        // Animated attachment offsets are passed as frame constants; no
+        // per-step CPU groom repack. Root history stores two vertices/guide.
+        const auto history_before=context.diagnostic_read_root_history(first);
+        check(history_before.size()==a->work.packed_guide_strands*2,
+              "compact root history has exactly two vertices per padded guide");
+        std::vector<loxfx::Float4> positions_after_first_motion;
+        for(float translation : {0.5f,0.9f,1.2f}) {
+            const auto motion=context.begin_diagnostic_commands();
+            context.record_integration(motion,first,
+                {.time_step=dt,.gravity=gravity,.damping=0,
+                 .root_translation_x=translation},1);
+            context.submit_diagnostic_and_wait();
+            const auto current=context.diagnostic_read_positions(first);
+            if (translation==0.5f) positions_after_first_motion=current;
+            check(std::abs(current[0].x-translation)<0.0001f,
+                  "root follows host attachment offset");
+            check(current[4].x==0.0f,
+                  "follower publication is not performed during integration");
+        }
+        const auto root_history=context.diagnostic_read_root_history(first);
+        check(std::abs(root_history[0].x-0.5f)<0.0001f,
+              "previous-previous root tracks the older attachment frame");
+        check(std::abs(root_history[1].y-positions_after_first_motion[1].y)<0.0001f,
+              "second root vertex stores prior-prior dynamic guide position");
+        const auto separate=context.diagnostic_read_positions(second);
+        check(separate[0].y==5.0f,
+              "moving one groom cannot modify another groom's roots");
+
+        // Source CalculateStrandLevelData assumes proximal attachment
+        // vertices 0 and 1 provide a nondegenerate rigid-motion basis.
+        // Unlike the prior dynamic vertex-1 fixture, both are pinned here.
+        auto attached=fixture(0.0f,1);
+        attached.positions[1].w=0.0f;
+        auto attached_prepared=loxfx::prepare_groom(
+            attached,{.followers_per_guide=1});
+        check(attached_prepared.has_value(),"prepare attached-root fixture");
+        auto attached_gpu=context.prepare(*attached_prepared);
+        for(float displacement : {0.25f,0.75f,1.25f}) {
+            auto command_buffer=context.begin_diagnostic_commands();
+            context.record_integration(command_buffer,attached_gpu,
+                {.time_step=dt,.gravity=gravity,.damping=0,
+                 .root_translation_x=displacement},1);
+            context.submit_diagnostic_and_wait();
+            const auto pos=context.diagnostic_read_positions(attached_gpu);
+            check(std::abs(pos[0].x-displacement)<0.0001f &&
+                  std::abs(pos[1].x-displacement)<0.0001f &&
+                  pos[0].y==0.0f && pos[1].y==1.0f,
+                  "both attached proximal guide vertices translate rigidly");
+        }
+        const auto anchored_history=context.diagnostic_read_root_history(attached_gpu);
+        check(std::abs(anchored_history[0].x-0.25f)<0.0001f &&
+              std::abs(anchored_history[1].x-0.25f)<0.0001f,
+              "compact history preserves both older rigid attachment positions");
+
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared

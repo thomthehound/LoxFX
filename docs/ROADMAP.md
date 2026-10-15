@@ -94,6 +94,13 @@ external engine, Vulkan or D3D12 types through the central asset/simulation API.
 
 ### M1 — First complete strand simulation
 
+**Next incremental physics milestone (draft PR #15):** shared
+host-driven root translation and two-root-per-guide previous-previous
+history, providing correctly ordered inputs for source-defined
+`CalculateStrandLevelData`. Full skeletal moving roots, strand-level
+orientation, VSP and additional passes are still outstanding. See
+[animated-root stage](ROOT_MOTION_STAGE.md).
+
 **Architecture milestone:** PR #11 merged the shared-device and command-
 recording proof. PR #14 adds native D3D12 stage-one execution against
 the same shader and host-owned submission contract. Both test harnesses

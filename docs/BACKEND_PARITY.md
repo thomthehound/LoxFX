@@ -49,6 +49,12 @@ choice of a private graphics device and blocking submission per groom.
 | Workgroups | 64 threads | 64 threads |
 | Work scheduling | Vulkan compute commands | D3D12 compute command lists |
 
+PR #15 retains the same 48-byte constants but interprets the last
+three floats as host-driven translation; both backends add a root-history
+UAV at shader `u3` / Vulkan set 0 binding 3. This stores two entries
+per guide and is uploaded only at creation and updated in the integration
+shader. See [root motion stage](ROOT_MOTION_STAGE.md).
+
 On both APIs: guide-only indexing, source-derived group counts, pinned roots,
 gravity, damping and rest-shape relaxation must produce equivalent results.
 Cross-API layouts are **contracts**, not native descriptor handles in the

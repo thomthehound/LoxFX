@@ -4,6 +4,7 @@
 #include "loxfx/d3d12/smoke_context.h"
 
 #include <wrl/client.h>
+#include <dxgi1_6.h>
 #include <windows.h>
 #include <cmath>
 #include <iostream>
@@ -149,6 +150,71 @@ int main(int argc,char** argv) {
                     "native compute through borrowed D3D12 context");
         }
 
+        // Regress Codex P2 on merged PR #14: a queue from a *different*
+        // device is not valid even if that device is the same WARP adapter.
+        {
+            ComPtr<IDXGIFactory4> factory;
+            hrcheck(CreateDXGIFactory2(0,IID_PPV_ARGS(factory.GetAddressOf())),
+                    "create alternate DXGI factory");
+            ComPtr<IDXGIAdapter> warp_adapter;
+            hrcheck(factory->EnumWarpAdapter(IID_PPV_ARGS(warp_adapter.GetAddressOf())),
+                    "select alternate WARP adapter");
+            ComPtr<ID3D12Device> other_device;
+            hrcheck(D3D12CreateDevice(warp_adapter.Get(),D3D_FEATURE_LEVEL_12_0,
+                        IID_PPV_ARGS(other_device.GetAddressOf())),
+                    "create independent WARP device");
+            ComPtr<IUnknown> primary_id, alternate_id;
+            hrcheck(context.native_device()->QueryInterface(
+                        IID_PPV_ARGS(primary_id.GetAddressOf())),
+                    "inspect primary COM identity");
+            hrcheck(other_device->QueryInterface(
+                        IID_PPV_ARGS(alternate_id.GetAddressOf())),
+                    "inspect alternate COM identity");
+            // D3D12CreateDevice may return a cached device COM identity for
+            // repeated calls on one adapter (notably WARP). Try other adapters
+            // rather than pretending those are distinct devices.
+            if (primary_id.Get()==alternate_id.Get()) {
+                for(UINT index=0;;++index){
+                    ComPtr<IDXGIAdapter1> candidate;
+                    if(factory->EnumAdapters1(index,candidate.GetAddressOf())==
+                       DXGI_ERROR_NOT_FOUND)break;
+                    DXGI_ADAPTER_DESC1 desc{};
+                    if(FAILED(candidate->GetDesc1(&desc)) ||
+                       (desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE))continue;
+                    ComPtr<ID3D12Device> probe;
+                    if(FAILED(D3D12CreateDevice(candidate.Get(),D3D_FEATURE_LEVEL_12_0,
+                            IID_PPV_ARGS(probe.GetAddressOf()))))continue;
+                    ComPtr<IUnknown> identity;
+                    hrcheck(probe->QueryInterface(IID_PPV_ARGS(identity.GetAddressOf())),
+                            "inspect alternate hardware device COM identity");
+                    if(identity.Get()!=primary_id.Get()){
+                        other_device=std::move(probe);
+                        alternate_id=std::move(identity);
+                        break;
+                    }
+                }
+            }
+            if(primary_id.Get()!=alternate_id.Get()){
+                D3D12_COMMAND_QUEUE_DESC queue_desc{};
+                queue_desc.Type=D3D12_COMMAND_LIST_TYPE_COMPUTE;
+                ComPtr<ID3D12CommandQueue> wrong_queue;
+                hrcheck(other_device->CreateCommandQueue(&queue_desc,
+                            IID_PPV_ARGS(wrong_queue.GetAddressOf())),
+                        "create wrong-device command queue");
+                bool rejected=false;
+                try {
+                    gpu::DeviceContext invalid(
+                        {context.native_device(),wrong_queue.Get()},argv[1]);
+                } catch (const std::invalid_argument&) {
+                    rejected=true;
+                }
+                require(rejected,"reject queue from a different D3D12 device");
+            } else {
+                std::cout << "Cross-device negative check skipped: only one "
+                             "D3D12 device COM identity available on runner\\n";
+            }
+        }
+
         // A borrowed DIRECT queue must use DIRECT command allocators/lists
         // even though the shader work itself is compute-only.
         {
@@ -174,6 +240,58 @@ int main(int argc,char** argv) {
         auto host_result=context.diagnostic_read_positions(g1);
         require(std::abs(host_result[1].y-(1.0f-15*delta))<0.0001f,
                 "externally allocated command list advances GPU history");
+
+        // The same moving-root test as Vulkan. Compact root history is
+        // two Float4 values per padded guide, never a full follower history.
+        const auto history_before=context.diagnostic_read_root_history(g1);
+        require(history_before.size()==first->work.packed_guide_strands*2,
+                "compact root history allocation");
+        std::vector<loxfx::Float4> positions_after_first_motion;
+        for(float translation : {0.5f,0.9f,1.2f}) {
+            auto* motion=context.begin_diagnostic_commands();
+            context.record_integration(motion,g1,
+                {.time_step=dt,.gravity=g,.damping=0,
+                 .root_translation_x=translation},1);
+            context.submit_diagnostic_and_wait();
+            const auto current=context.diagnostic_read_positions(g1);
+            if (translation==0.5f) positions_after_first_motion=current;
+            require(std::abs(current[0].x-translation)<0.0001f,
+                    "D3D12 root follows host attachment offset");
+            require(current[4].x==0.0f,
+                    "D3D12 follower publication remains separate");
+        }
+        const auto root_history=context.diagnostic_read_root_history(g1);
+        require(std::abs(root_history[0].x-0.5f)<0.0001f,
+                "D3D12 previous-previous roots match Vulkan history");
+        require(std::abs(root_history[1].y-positions_after_first_motion[1].y)<0.0001f,
+                "D3D12 dynamic second-root history matches older simulation state");
+        require(context.diagnostic_read_positions(g2)[0].y==5.0f,
+                "D3D12 other groom roots stay independent");
+
+        // Both proximal vertices attached: the reference strand-motion
+        // solver reads their rotation/translation basis across frames.
+        auto attached=fixture(0.0f,1);
+        attached.positions[1].w=0.0f;
+        auto attached_prepared=loxfx::prepare_groom(
+            attached,{.followers_per_guide=1});
+        require(attached_prepared.has_value(),"prepare attached-root D3D12 fixture");
+        auto attached_gpu=context.prepare_diagnostic(*attached_prepared);
+        for(float displacement : {0.25f,0.75f,1.25f}) {
+            auto* motion=context.begin_diagnostic_commands();
+            context.record_integration(motion,attached_gpu,
+                {.time_step=dt,.gravity=g,.damping=0,
+                 .root_translation_x=displacement},1);
+            context.submit_diagnostic_and_wait();
+            const auto pos=context.diagnostic_read_positions(attached_gpu);
+            require(std::abs(pos[0].x-displacement)<0.0001f &&
+                    std::abs(pos[1].x-displacement)<0.0001f &&
+                    pos[0].y==0.0f && pos[1].y==1.0f,
+                    "D3D12 attached proximal guide vertices translate rigidly");
+        }
+        const auto anchored_history=context.diagnostic_read_root_history(attached_gpu);
+        require(std::abs(anchored_history[0].x-0.25f)<0.0001f &&
+                std::abs(anchored_history[1].x-0.25f)<0.0001f,
+                "D3D12 compact history preserves both older attachment positions");
 
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
