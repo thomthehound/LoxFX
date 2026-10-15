@@ -28,6 +28,7 @@ reproducible GPU and correctness evidence, or documented rejection.
 | OPT-008 | P2 | blocked | GPU correctness and numerical baseline | Compact and mixed-precision device buffers |
 | OPT-009 | P0 | implemented-awaiting-measurement | Physical GPU baseline | Verify elimination of legacy master/follower over-dispatch |
 | OPT-010 | P1 | blocked | Quality and GPU timing baseline | Higher-fidelity follower interpolation per simulated guide |
+| OPT-011 | P1 | blocked | Multi-groom persistent GPU runtime | Suballocate buffers and manage temporary staging lifetime |
 
 ## OPT-001 — Duplicate static follower data
 
@@ -197,6 +198,29 @@ memory and perceptual error. See
 **Evidence / source:** TressFX 4.1 `UpdateFollowHairVertices` linear root-offset formula; physically guided interpolation approaches described in [modernization research](MODERNIZATION_RESEARCH.md). **Suspected cost:** additional computation could increase runtime; possible fidelity-per-guide gain unmeasured.
 **Acceptance:** documented visual-motion improvement at controlled simulated guide count with practical full-frame performance on consumer GPU hardware. Open dedicated issue after a visual baseline and style fixtures exist.
 
+## OPT-011 — Dedicated Vulkan allocation overhead and staging lifetime
+
+**Evidence / source:** `src/vulkan/integration.cpp` currently requests
+individual Vulkan memory allocations for current/previous/rest positions and
+one persistent host-visible staging buffer per groom. This milestone removes
+three redundant **CPU** upload copies and uses one staging image for all three
+initial uploads, but staging still remains allocated for the lifetime of the
+runtime, and allocations are dedicated. Hardware cost is not yet measured.
+
+**Suspected cost:** allocation count, fragmentation, and retained host memory
+for multiple grooms. `allocated_buffer_bytes()` reports the real Vulkan
+allocation requirements including staging, not VRAM residency.
+
+**Experiment:** after multiple grooms and asynchronous command submission
+work, compare shared staging suballocation/recycling and device-local
+suballocation against dedicated allocations. Measure host/VRAM allocation
+budgets, upload latency, GPU stalls, full-frame time and fragmentation on
+consumer hardware. No early allocator framework before profiling.
+
+**Acceptance:** reduced measured committed memory or allocation overhead
+without broken transfer fences, ownership, correctness, or slower whole-frame
+throughput. **Status:** blocked until multi-groom runtime and GPU profiling.
+
 ## Evidence and handoff log
 
 - **2026-10-15, PR #2:** Source-derived six-pass work plan and verified guide
@@ -204,6 +228,10 @@ memory and perceptual error. See
 - **2026-10-15, PR #3:** Deterministic prepared interleaved follower data,
   real Ratboy smoke tests and static upload sizes. Retain current
   correctness path until GPU buffer consumers are audited (OPT-001/002).
+- **2026-10-15, Vulkan stage-one review:** Validated mutable prepared
+  topology before GPU access and selected a groom-compatible adapter.
+  Removed duplicate CPU upload copies and included staging in actual
+  allocation counts. Deferred multi-groom suballocation/reuse (OPT-011).
 - **2026-10-15, Vulkan stage-one:** Persistent current/previous/rest device
   buffers and a single source-derived integration pass added as an opt-in
   native Vulkan runner. The synchronous batch fence is a correctness harness,

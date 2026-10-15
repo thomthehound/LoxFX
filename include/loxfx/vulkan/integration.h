@@ -37,7 +37,10 @@ public:
     // Timestamp-based duration of the most recent advance batch. Returns
     // -1 if the selected compute queue does not support timestamps.
     [[nodiscard]] double last_gpu_milliseconds() const noexcept;
-    [[nodiscard]] std::uint64_t resident_buffer_bytes() const noexcept;
+    // Actual vkAllocateMemory allocation sizes, including persistent staging;
+    // these are allocated bytes, not a device-driver residency measurement.
+    [[nodiscard]] std::uint64_t allocated_buffer_bytes() const noexcept;
+    [[nodiscard]] std::uint64_t staging_allocation_bytes() const noexcept;
 
 private:
     struct Impl;

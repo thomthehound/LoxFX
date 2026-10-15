@@ -11,8 +11,9 @@ remains open for the full six-stage GPU strand solver.
 - A real native Vulkan compute pipeline, compiled from one HLSL source using
   DXC to SPIR-V (SM6.6 target). Source-derived guide-only dispatch indexing.
 - Persistent device-local current, previous and rest position buffers,
-  prepared/uploaded once per groom. A host-visible staging buffer is reserved
-  for initial upload and **explicit diagnostic readback only**.
+  prepared/uploaded once per groom. A **single-image** host-visible staging
+  buffer is shared for initial uploads to all three buffers and **explicit
+  diagnostic readback only**, rather than storing three redundant host copies.
 - GPU Verlet integration, damping, gravity, fixed attachment roots and
   source-style global rest-shape stiffness, currently with **static roots**.
 - Batched command submission with memory dependency between sequential
@@ -48,7 +49,10 @@ tracked cross-backend acceptance requirements.
 
 ## Runtime and performance boundaries
 
-The first executor selects a hardware Vulkan compute device before a software adapter, and implements an API 1.2 Vulkan subset so software Vulkan CI
+The first executor selects a capable hardware Vulkan compute device (discrete
+before integrated, then other GPU adapters) before a compatible software
+adapter. Selection checks the requested groom's buffer, dispatch and shader
+limits once at initialization. It implements an API 1.2 Vulkan subset so software Vulkan CI
 can execute it. Intended shipping qualification remains **Vulkan 1.4**;
 runtime feature admission and compatibility are not complete. Shader compilation
 is build-time through DXC; no runtime compiler is loaded by the SDK.
@@ -60,6 +64,13 @@ production async frame scheduler. Frame-in-flight synchronization, external
 queue use, animated roots and rendering handoff are the next work. The
 diagnostic readback is explicitly user-requested and never happens during
 advance(). Buffer allocations happen at initialization only.
+
+Memory accounting reports **actual `vkAllocateMemory` allocation sizes**
+for the three persistent device buffers and the persistent host staging
+buffer, including Vulkan's allocation padding. The aggregate is not a
+driver-observed VRAM residency metric; its staging portion is reported
+separately. GPU memory savings from alternative representations have not
+been measured.
 
 Timestamp duration includes the batch of step-one dispatches and internal
 compute barriers. Software device times are not consumer GPU performance

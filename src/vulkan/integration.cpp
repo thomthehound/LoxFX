@@ -67,7 +67,8 @@ struct IntegrationRuntime::Impl {
     struct Buffer {
         VkBuffer buffer = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
-        VkDeviceSize bytes = 0;
+        VkDeviceSize bytes = 0;             // requested buffer range
+        VkDeviceSize allocation_bytes = 0;  // actual vkAllocateMemory size
     };
 
     VkInstance instance = VK_NULL_HANDLE;
@@ -138,6 +139,7 @@ struct IntegrationRuntime::Impl {
         alloc.allocationSize = requirements.size;
         alloc.memoryTypeIndex = memory_index(requirements.memoryTypeBits, memory_flags);
         vk_check(vkAllocateMemory(device, &alloc, nullptr, &result.memory), "allocate buffer");
+        result.allocation_bytes = alloc.allocationSize;
         vk_check(vkBindBufferMemory(device, result.buffer, result.memory, 0), "bind buffer");
     }
 
@@ -182,15 +184,35 @@ struct IntegrationRuntime::Impl {
         std::vector<VkPhysicalDevice> devices(count);
         vk_check(vkEnumeratePhysicalDevices(instance, &count, devices.data()),
                  "enumerate physical devices");
-        // Never silently prefer a CPU Vulkan adapter over a real GPU.
-        // This policy is queried ONCE during initialization.
-        for (int tier = 0; tier < 2 && !physical; ++tier) {
+        // Select by groom capabilities, then device tier. Otherwise the
+        // first enumerated GPU could reject a groom supported by a later GPU.
+        // Enumerate only once, at creation; never in the dispatch hot path.
+        const auto device_tier = [](VkPhysicalDeviceType type) {
+            switch (type) {
+            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 0;
+            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 1;
+            case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return 2;
+            case VK_PHYSICAL_DEVICE_TYPE_CPU: return 4;
+            default: return 3;
+            }
+        };
+        for (int tier = 0; tier < 5 && !physical; ++tier) {
             for (VkPhysicalDevice candidate : devices) {
                 VkPhysicalDeviceProperties props{};
                 vkGetPhysicalDeviceProperties(candidate, &props);
-                if (props.apiVersion < VK_API_VERSION_1_2) continue;
-                const bool cpu = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
-                if (cpu != (tier == 1)) continue;
+                if (device_tier(props.deviceType) != tier ||
+                    props.apiVersion < VK_API_VERSION_1_2)
+                    continue;
+                const VkPhysicalDeviceLimits& lim = props.limits;
+                if (vertex_bytes > lim.maxStorageBufferRange ||
+                    groups > lim.maxComputeWorkGroupCount[0] ||
+                    lim.maxComputeWorkGroupSize[0] < 64 ||
+                    lim.maxComputeWorkGroupInvocations < 64 ||
+                    lim.maxPushConstantsSize < sizeof(PushParameters) ||
+                    lim.maxDescriptorSetStorageBuffers < 3 ||
+                    lim.maxPerStageDescriptorStorageBuffers < 3)
+                    continue;
+
                 std::uint32_t families = 0;
                 vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, nullptr);
                 std::vector<VkQueueFamilyProperties> queue_props(families);
@@ -200,7 +222,7 @@ struct IntegrationRuntime::Impl {
                         physical = candidate;
                         family = i;
                         device_name = props.deviceName;
-                        software = cpu;
+                        software = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
                         timestamp_valid_bits = queue_props[i].timestampValidBits;
                         timestamp_supported = timestamp_valid_bits != 0;
                         timestamp_period = props.limits.timestampPeriod;
@@ -210,7 +232,10 @@ struct IntegrationRuntime::Impl {
                 if (physical) break;
             }
         }
-        if (!physical) throw std::runtime_error("no Vulkan 1.2+ compute queue");
+        if (!physical)
+            throw std::runtime_error(
+                "no Vulkan 1.2+ compute device supports the groom's buffer, "
+                "dispatch, descriptor and shader limits");
         const float priority = 1.0f;
         VkDeviceQueueCreateInfo queue_create{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
         queue_create.queueFamilyIndex = family;
@@ -225,33 +250,49 @@ struct IntegrationRuntime::Impl {
     }
 
     void init(const PreparedGroom& groom, const std::filesystem::path& spirv_path) {
-        if (!groom.work.packed_total_vertices ||
-            groom.rest_positions.size() != groom.work.packed_total_vertices ||
-            groom.vertices_per_strand == 0 ||
-            groom.work.packed_guide_strands == 0)
-            throw std::invalid_argument("prepared groom has inconsistent geometry");
-        if (groom.work.stages[0].stage != SimulationStage::integration_and_global_shape ||
-            !groom.work.stages[0].thread_groups)
-            throw std::invalid_argument("invalid first-stage dispatch");
+        // Public PreparedGroom is mutable, so treat all topology and dispatch
+        // fields as untrusted at the GPU boundary. Rebuild once, not per step.
+        const std::uint32_t requested_iterations =
+            groom.vertices_per_strand == 64
+                ? groom.work.shader_local_shape_iterations
+                : groom.work.stages[3].iterations;
+        const auto expected = make_simulation_work_plan({
+            groom.authored_guide_strands, groom.vertices_per_strand,
+            groom.followers_per_guide, requested_iterations
+        });
+        if (!expected ||
+            groom.work.packed_guide_strands != expected->packed_guide_strands ||
+            groom.work.packed_total_strands != expected->packed_total_strands ||
+            groom.work.packed_total_vertices != expected->packed_total_vertices ||
+            groom.work.shader_local_shape_iterations != expected->shader_local_shape_iterations ||
+            groom.work.planned_lane_invocations != expected->planned_lane_invocations ||
+            groom.work.reference_lane_invocations != expected->reference_lane_invocations ||
+            groom.rest_positions.size() != expected->packed_total_vertices)
+            throw std::invalid_argument("prepared groom topology does not match its work plan");
+        for (std::size_t i = 0; i < expected->stages.size(); ++i) {
+            const auto& actual = groom.work.stages[i];
+            const auto& required = expected->stages[i];
+            if (actual.stage != required.stage ||
+                actual.thread_groups != required.thread_groups ||
+                actual.iterations != required.iterations)
+                throw std::invalid_argument("prepared groom stage dispatch does not match topology");
+        }
+        for (const Float4& p : groom.rest_positions) {
+            if (!(std::isfinite(p.x) && std::isfinite(p.y) &&
+                  std::isfinite(p.z) && std::isfinite(p.w)))
+                throw std::invalid_argument("prepared groom contains non-finite positions");
+        }
         vertices = groom.vertices_per_strand;
         followers = groom.followers_per_guide;
-        guides = groom.work.packed_guide_strands;
-        groups = groom.work.stages[0].thread_groups;
-        vertex_bytes = static_cast<VkDeviceSize>(groom.rest_positions.size()) * sizeof(Float4);
-        if (vertex_bytes > std::numeric_limits<VkDeviceSize>::max() / 3)
-            throw std::invalid_argument("prepared groom exceeds staging capacity");
+        guides = expected->packed_guide_strands;
+        groups = expected->stages[0].thread_groups;
+        vertex_bytes = static_cast<VkDeviceSize>(groom.rest_positions.size()) *
+            sizeof(Float4);
+        if (vertex_bytes == 0 ||
+            vertex_bytes > std::numeric_limits<VkDeviceSize>::max() / 3)
+            throw std::invalid_argument("prepared groom exceeds supported storage size");
 
         create_device();
-        VkPhysicalDeviceProperties limits{};
-        vkGetPhysicalDeviceProperties(physical, &limits);
-        if (vertex_bytes > limits.limits.maxStorageBufferRange)
-            throw std::runtime_error(
-                "groom exceeds selected device maxStorageBufferRange; "
-                "partitioning oversized grooms is not yet implemented");
-        if (groups > limits.limits.maxComputeWorkGroupCount[0])
-            throw std::runtime_error(
-                "groom exceeds selected device maxComputeWorkGroupCount[0]; "
-                "multi-dispatch partitioning is not yet implemented");
         allocate(current, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -261,7 +302,9 @@ struct IntegrationRuntime::Impl {
         allocate(rest, vertex_bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        allocate(staging, vertex_bytes * 3, VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+        // One staging image is sufficient: all three device buffers begin
+        // with identical rest positions. No threefold host-side replication.
+        allocate(staging, vertex_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
@@ -363,15 +406,14 @@ struct IntegrationRuntime::Impl {
         void* mapped = nullptr;
         vk_check(vkMapMemory(device, staging.memory, 0, staging.bytes, 0, &mapped),
                  "map upload staging");
-        for (int i = 0; i < 3; ++i)
-            std::memcpy(static_cast<char*>(mapped) + vertex_bytes * i,
-                        groom.rest_positions.data(), static_cast<std::size_t>(vertex_bytes));
+        std::memcpy(mapped, groom.rest_positions.data(),
+                    static_cast<std::size_t>(vertex_bytes));
         vkUnmapMemory(device, staging.memory);
         begin_commands();
         const std::array<Buffer*, 3> destinations{&current, &previous, &rest};
         for (std::uint32_t i = 0; i < 3; ++i) {
             VkBufferCopy copy{};
-            copy.srcOffset = vertex_bytes * i;
+            copy.srcOffset = 0;
             copy.size = vertex_bytes;
             vkCmdCopyBuffer(commands, staging.buffer, destinations[i]->buffer, 1, &copy);
         }
@@ -479,8 +521,12 @@ bool IntegrationRuntime::is_software_device() const noexcept {
 double IntegrationRuntime::last_gpu_milliseconds() const noexcept {
     return impl_->last_gpu_ms;
 }
-std::uint64_t IntegrationRuntime::resident_buffer_bytes() const noexcept {
-    return static_cast<std::uint64_t>(impl_->vertex_bytes) * 3;
+std::uint64_t IntegrationRuntime::allocated_buffer_bytes() const noexcept {
+    return impl_->current.allocation_bytes + impl_->previous.allocation_bytes +
+           impl_->rest.allocation_bytes + impl_->staging.allocation_bytes;
+}
+std::uint64_t IntegrationRuntime::staging_allocation_bytes() const noexcept {
+    return impl_->staging.allocation_bytes;
 }
 
 } // namespace loxfx::vulkan

@@ -7,11 +7,22 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 namespace {
 void check(bool ok, const char* reason) {
     if (!ok) throw std::runtime_error(reason);
+}
+
+void check_invalid_groom(const loxfx::PreparedGroom& groom, const char* shader,
+                         const char* reason) {
+    try {
+        loxfx::vulkan::IntegrationRuntime runtime(groom, shader);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    throw std::runtime_error(reason);
 }
 
 loxfx::GroomAsset test_groom() {
@@ -29,6 +40,24 @@ int main(int argc, char** argv) {
     try {
         const auto groom = loxfx::prepare_groom(test_groom(), {.followers_per_guide = 1});
         check(groom.has_value(), "prepared fixture");
+        // Public prepared data can be edited; malformed topology must fail
+        // before creating descriptors or dispatching division-by-zero shaders.
+        auto invalid = *groom;
+        invalid.vertices_per_strand = 65;
+        check_invalid_groom(invalid, argv[1], "reject 65-vertex topology");
+        invalid = *groom;
+        invalid.followers_per_guide += 1;
+        check_invalid_groom(invalid, argv[1], "reject inconsistent follower count");
+        invalid = *groom;
+        invalid.work.stages[0].thread_groups += 1;
+        check_invalid_groom(invalid, argv[1], "reject mismatched stage dispatch");
+        invalid = *groom;
+        invalid.work.packed_total_strands += 1;
+        check_invalid_groom(invalid, argv[1], "reject mismatched packed topology");
+        invalid = *groom;
+        invalid.rest_positions[0].x = std::numeric_limits<float>::quiet_NaN();
+        check_invalid_groom(invalid, argv[1], "reject non-finite rest positions");
+
         loxfx::vulkan::IntegrationRuntime gpu(*groom, argv[1]);
         const auto before = gpu.read_positions();
         check(before.size() == groom->work.packed_total_vertices, "readback vertex count");
@@ -59,13 +88,21 @@ int main(int argc, char** argv) {
               "global shape constraint restores authored geometry");
         check(restored[0].y == 0.0f, "pinned root remains stable");
 
-        check(gpu.resident_buffer_bytes() ==
-              3 * groom->work.packed_total_vertices * sizeof(loxfx::Float4),
-              "resident buffer accounting");
+        const std::uint64_t vertex_bytes =
+            groom->work.packed_total_vertices * sizeof(loxfx::Float4);
+        check(gpu.allocated_buffer_bytes() >= 4 * vertex_bytes,
+              "reported allocation includes three device buffers and staging");
+        check(gpu.staging_allocation_bytes() >= vertex_bytes,
+              "single-image staging allocation must be accounted for");
+        check(gpu.allocated_buffer_bytes() >= gpu.staging_allocation_bytes() +
+              3 * vertex_bytes, "all device buffers included in allocation total");
         std::cout << "Vulkan device: " << gpu.device_name()
                   << (gpu.is_software_device() ? " (software)" : " (hardware/unknown)")
                   << "\nPrepared vertices: " << groom->work.packed_total_vertices
-                  << "\nPersistent device bytes: " << gpu.resident_buffer_bytes()
+                  << "\nAllocated Vulkan buffer bytes (including staging): "
+                  << gpu.allocated_buffer_bytes()
+                  << "\nStaging allocation bytes: "
+                  << gpu.staging_allocation_bytes()
                   << "\nStage 1, three-step batch GPU milliseconds: "
                   << three_step_gpu_ms << "\n"
                   << "Stage 1, final one-step shape batch GPU milliseconds: "
