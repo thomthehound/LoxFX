@@ -19,6 +19,10 @@ and dispatch semantics must ultimately agree across both APIs.
 - Runtime backends must be usable independently, without mandatory third
   party engine or specific-GPU acceleration features. Backend choice and
   capabilities are established at initialization, not queried each dispatch.
+  **Descriptor/dispatch limits do not imply memory allocation capacity**:
+  backends must validate and attempt required allocations on a suitable
+  device, and either retry other compatible adapters or report the failure
+  through explicit externally selected device ownership.
 - Keep shader variants to justified device features; do not conflate
   subgroup/wave primitives with hardware matrix accelerators.
 - Require independent correctness checks and *hardware* performance

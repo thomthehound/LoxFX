@@ -52,7 +52,12 @@ tracked cross-backend acceptance requirements.
 The first executor selects a capable hardware Vulkan compute device (discrete
 before integrated, then other GPU adapters) before a compatible software
 adapter. Selection checks the requested groom's buffer, dispatch and shader
-limits once at initialization. It implements an API 1.2 Vulkan subset so software Vulkan CI
+limits and the independently specified `maxMemoryAllocationSize` once at
+initialization. Each eligible adapter is then tested against **actual buffer
+allocation requirements**: a failed partial allocation is cleaned up and
+the next candidate is tried. Descriptor size and nominal heap sizes alone
+do not guarantee available memory. This never occurs per frame. It implements
+an API 1.2 Vulkan subset so software Vulkan CI
 can execute it. Intended shipping qualification remains **Vulkan 1.4**;
 runtime feature admission and compatibility are not complete. Shader compilation
 is build-time through DXC; no runtime compiler is loaded by the SDK.

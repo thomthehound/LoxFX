@@ -202,7 +202,10 @@ memory and perceptual error. See
 
 **Evidence / source:** `src/vulkan/integration.cpp` currently requests
 individual Vulkan memory allocations for current/previous/rest positions and
-one persistent host-visible staging buffer per groom. This milestone removes
+one persistent host-visible staging buffer per groom. Initial device
+selection now checks `maxMemoryAllocationSize` and retries actual buffer
+allocations on subsequent eligible GPUs if a previous adapter fails.
+This milestone removes
 three redundant **CPU** upload copies and uses one staging image for all three
 initial uploads, but staging still remains allocated for the lifetime of the
 runtime, and allocations are dedicated. Hardware cost is not yet measured.
@@ -228,6 +231,10 @@ throughput. **Status:** blocked until multi-groom runtime and GPU profiling.
 - **2026-10-15, PR #3:** Deterministic prepared interleaved follower data,
   real Ratboy smoke tests and static upload sizes. Retain current
   correctness path until GPU buffer consumers are audited (OPT-001/002).
+- **2026-10-15, subsequent Vulkan review:** Added separate allocation-size
+  admission and transactional allocation retry across eligible adapters;
+  this is correctness work during initialization, not a frame speedup.
+  Multi-groom allocation reuse remains OPT-011.
 - **2026-10-15, Vulkan stage-one review:** Validated mutable prepared
   topology before GPU access and selected a groom-compatible adapter.
   Removed duplicate CPU upload copies and included staging in actual
