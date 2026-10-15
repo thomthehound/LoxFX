@@ -167,6 +167,7 @@ struct DeviceContext::Impl {
     VkPipeline strand_pipeline = VK_NULL_HANDLE;
     VkPipeline velocity_shock_pipeline = VK_NULL_HANDLE;
     VkPipeline local_shape_pipeline = VK_NULL_HANDLE;
+    VkPipeline length_wind_pipeline = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkCommandBuffer diagnostic_commands = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
@@ -183,6 +184,7 @@ struct DeviceContext::Impl {
             if (fence) vkDestroyFence(device, fence, nullptr);
             if (queries) vkDestroyQueryPool(device, queries, nullptr);
             if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
+            if (length_wind_pipeline) vkDestroyPipeline(device, length_wind_pipeline, nullptr);
             if (local_shape_pipeline) vkDestroyPipeline(device, local_shape_pipeline, nullptr);
             if (velocity_shock_pipeline) vkDestroyPipeline(device, velocity_shock_pipeline, nullptr);
             if (strand_pipeline) vkDestroyPipeline(device, strand_pipeline, nullptr);
@@ -209,9 +211,9 @@ struct DeviceContext::Impl {
         if (props.apiVersion < VK_API_VERSION_1_2 ||
             props.limits.maxComputeWorkGroupSize[0] < 64 ||
             props.limits.maxComputeWorkGroupInvocations < 64 ||
-            props.limits.maxPushConstantsSize < sizeof(Constants) ||
-            props.limits.maxDescriptorSetStorageBuffers < 5 ||
-            props.limits.maxPerStageDescriptorStorageBuffers < 5)
+            props.limits.maxPushConstantsSize < 96 ||
+            props.limits.maxDescriptorSetStorageBuffers < 6 ||
+            props.limits.maxPerStageDescriptorStorageBuffers < 6)
             throw std::invalid_argument("selected Vulkan device cannot run integration shader");
         physical = ext.physical;
         device = ext.logical;
@@ -246,9 +248,9 @@ struct DeviceContext::Impl {
                     props.apiVersion < VK_API_VERSION_1_2 ||
                     props.limits.maxComputeWorkGroupSize[0] < 64 ||
                     props.limits.maxComputeWorkGroupInvocations < 64 ||
-                    props.limits.maxPushConstantsSize < sizeof(Constants) ||
-                    props.limits.maxDescriptorSetStorageBuffers < 5 ||
-                    props.limits.maxPerStageDescriptorStorageBuffers < 5)
+                    props.limits.maxPushConstantsSize < 96 ||
+                    props.limits.maxDescriptorSetStorageBuffers < 6 ||
+                    props.limits.maxPerStageDescriptorStorageBuffers < 6)
                     continue;
                 std::uint32_t count_q = 0;
                 vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count_q, nullptr);
@@ -285,7 +287,7 @@ struct DeviceContext::Impl {
         if (!physical) throw std::runtime_error("no qualified Vulkan compute device");
     }
     void initialize_pipeline(const std::filesystem::path& spirv) {
-        std::array<VkDescriptorSetLayoutBinding,5> bindings{};
+        std::array<VkDescriptorSetLayoutBinding,6> bindings{};
         for (std::uint32_t i=0;i<bindings.size();++i) {
             bindings[i].binding=i;
             bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -302,7 +304,7 @@ struct DeviceContext::Impl {
         layout=created_layout;
         VkPushConstantRange push{};
         push.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;
-        push.size=sizeof(Constants);
+        push.size=96;
         VkPipelineLayoutCreateInfo pci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pci.setLayoutCount=1;
         pci.pSetLayouts=&layout;
@@ -381,6 +383,22 @@ struct DeviceContext::Impl {
         vkDestroyShaderModule(device,shape_module,nullptr);
         verify(shape_result,"create local-shape pipeline");
         local_shape_pipeline=created_shape;
+        const auto shader5=load_shader(spirv.parent_path()/"loxfx_length_wind.spv");
+        VkShaderModuleCreateInfo shader5_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        shader5_info.codeSize=shader5.size()*sizeof(std::uint32_t);
+        shader5_info.pCode=shader5.data();
+        VkShaderModule module5=VK_NULL_HANDLE;
+        verify(vkCreateShaderModule(device,&shader5_info,nullptr,&module5),
+               "create length-wind module");
+        sci.module=module5;
+        sci.pName="LengthWindConstraints";
+        cpi.stage=sci;
+        VkPipeline created5=VK_NULL_HANDLE;
+        const VkResult result5=vkCreateComputePipelines(
+            device,VK_NULL_HANDLE,1,&cpi,nullptr,&created5);
+        vkDestroyShaderModule(device,module5,nullptr);
+        verify(result5,"create length-wind pipeline");
+        length_wind_pipeline=created5;
 
         VkCommandPoolCreateInfo poolci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolci.queueFamilyIndex=family;
@@ -455,10 +473,12 @@ struct GroomState::Impl {
     VkDevice device=VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool=VK_NULL_HANDLE;
     VkDescriptorSet set=VK_NULL_HANDLE, strand_set=VK_NULL_HANDLE;
-    Buffer current, previous, rest, root_previous_previous, strand_data;
+    Buffer current, previous, rest, root_previous_previous, strand_data,
+           guide_rest_lengths;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
     std::uint32_t local_dispatch_iterations=0, local_shader_iterations=0;
-    VkDeviceSize vertex_bytes=0, root_history_bytes=0, strand_bytes=0;
+    VkDeviceSize vertex_bytes=0, root_history_bytes=0, strand_bytes=0,
+                 guide_length_bytes=0;
     const void* context_id=nullptr;
     ~Impl() {
         if (device && descriptor_pool)
@@ -475,7 +495,8 @@ std::uint64_t GroomState::allocated_buffer_bytes() const noexcept {
     return impl_->current.allocation_bytes+impl_->previous.allocation_bytes+
            impl_->rest.allocation_bytes+
            impl_->root_previous_previous.allocation_bytes+
-           impl_->strand_data.allocation_bytes;
+           impl_->strand_data.allocation_bytes+
+           impl_->guide_rest_lengths.allocation_bytes;
 }
 
 DeviceContext::DeviceContext(const std::filesystem::path& spirv)
@@ -500,11 +521,14 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
         source.work.packed_guide_strands)*2*sizeof(Float4);
     const VkDeviceSize strand_bytes=static_cast<VkDeviceSize>(
         source.work.packed_guide_strands)*sizeof(StrandMotionData);
+    const VkDeviceSize guide_length_bytes=static_cast<VkDeviceSize>(
+        source.work.packed_guide_strands)*source.vertices_per_strand*sizeof(float);
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(impl_->physical,&props);
     if(bytes>props.limits.maxStorageBufferRange ||
        root_bytes>props.limits.maxStorageBufferRange ||
        strand_bytes>props.limits.maxStorageBufferRange ||
+       guide_length_bytes>props.limits.maxStorageBufferRange ||
        source.work.stages[1].thread_groups>props.limits.maxComputeWorkGroupCount[0] ||
        source.work.stages[0].thread_groups>props.limits.maxComputeWorkGroupCount[0])
         throw std::invalid_argument("groom exceeds selected device resource or dispatch limit");
@@ -516,6 +540,7 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     groom->vertex_bytes=bytes;
     groom->root_history_bytes=root_bytes;
     groom->strand_bytes=strand_bytes;
+    groom->guide_length_bytes=guide_length_bytes;
     groom->strand_groups=source.work.stages[1].thread_groups;
     groom->vertices=source.vertices_per_strand;
     groom->followers=source.followers_per_guide;
@@ -539,6 +564,9 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     groom->strand_data.create(
         impl_->physical,impl_->device,strand_bytes,
         storage|transfer|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    groom->guide_rest_lengths.create(
+        impl_->physical,impl_->device,guide_length_bytes,storage|transfer,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,10};
