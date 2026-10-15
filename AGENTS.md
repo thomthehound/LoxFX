@@ -24,6 +24,12 @@ important decisions across sessions.
   Host-owned and explicit standalone device contexts share the same recorder.
   GPU resources must be failure-safe RAII with owned/borrowed handles clear.
   See [GPU runtime architecture](docs/GPU_RUNTIME_ARCHITECTURE.md).
+- **Codex review timing:** automatic Codex review may trigger when a
+  draft PR is marked "Ready for review". Do NOT mark ready and immediately
+  merge; that starts an asynchronous review that may arrive after merge.
+  Once code/CI are stable, mark ready, check for pending automatic review,
+  incorporate useful findings, and only then merge on explicit approval.
+  External bot availability is not a substitute for independent self-review.
 - Preserve source-grounded simulation behavior, data ownership, dispatch
   dependencies, synchronization and publication when porting TressFX.
   Deliberate departures require reasons and correctness comparisons.

@@ -156,3 +156,14 @@ alone. Verify GPU barrier visibility of integration results, no CPU
 submission from stage recorder and no per-follower output allocation.
 Skinning remains identity until full skeletal attachment is present.
 No driver-recovery scope creep or unmeasured speedup claims.
+
+## Review trigger discipline (15 October 2026)
+
+Codex's managed automatic code review may begin only when a draft PR
+becomes **Ready for review**. Marking ready immediately before merging
+can produce perfectly valid reviews that arrive *after* merge. Prefer
+this sequence: independent final source review → green CI on exact code
+head → mark PR ready → allow the configured automatic review to finish
+when available → address any findings → merge after approval. Never
+misrepresent a pending code review as a passed code review, and don't
+require an unavailable bot to block productive work indefinitely.
