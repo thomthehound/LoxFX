@@ -14,7 +14,8 @@ include(CMakePackageConfigHelpers)
 
 add_library(loxfx_core STATIC
   src/tfx_import.cpp
-  src/simulation_work.cpp)
+  src/simulation_work.cpp
+  src/prepared_groom.cpp)
 add_library(LoxFX::Core ALIAS loxfx_core)
 target_compile_features(loxfx_core PUBLIC cxx_std_23)
 target_include_directories(loxfx_core PUBLIC
@@ -43,6 +44,10 @@ if(BUILD_TESTING)
   add_executable(loxfx_simulation_work_tests tests/simulation_work_tests.cpp)
   target_link_libraries(loxfx_simulation_work_tests PRIVATE LoxFX::Core)
   add_test(NAME loxfx_simulation_work COMMAND loxfx_simulation_work_tests)
+
+  add_executable(loxfx_prepared_groom_tests tests/prepared_groom_tests.cpp)
+  target_link_libraries(loxfx_prepared_groom_tests PRIVATE LoxFX::Core)
+  add_test(NAME loxfx_prepared_groom COMMAND loxfx_prepared_groom_tests)
 endif()
 
 # Public, relocatable CMake package for independently built consumers.
