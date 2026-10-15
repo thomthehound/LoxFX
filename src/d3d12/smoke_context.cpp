@@ -459,8 +459,8 @@ struct GroomState::Impl {
     std::shared_ptr<void> context_lifetime;
     const void* context_id = nullptr;
     ComPtr<ID3D12Resource> current, previous, rest, root_previous_previous,
-                           strand_data, guide_rest_lengths, tangents;
-    std::uint64_t root_history_bytes=0, strand_bytes=0, guide_length_bytes=0;
+                           strand_data, guide_static_data, tangents;
+    std::uint64_t root_history_bytes=0, strand_bytes=0, guide_static_bytes=0;
     std::uint32_t vertices=0, followers=0, guides=0, groups=0, strand_groups=0;
     std::uint32_t local_dispatch_iterations=0, local_shader_iterations=0;
     std::uint64_t bytes=0;
@@ -515,8 +515,10 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
         source.work.packed_guide_strands)*2*sizeof(Float4);
     g->strand_bytes=static_cast<UINT64>(
         source.work.packed_guide_strands)*sizeof(StrandMotionData);
-    g->guide_length_bytes=static_cast<UINT64>(
+    const UINT64 guide_length_bytes=static_cast<UINT64>(
         source.work.packed_guide_strands)*source.vertices_per_strand*sizeof(float);
+    g->guide_static_bytes=guide_length_bytes+
+        static_cast<UINT64>(source.follower_root_offsets.size())*sizeof(Float4);
     if(!g->bytes)throw std::invalid_argument("empty prepared hair buffers");
     const auto uav_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     const auto rest_desc=buffer_desc(g->bytes,D3D12_RESOURCE_FLAG_NONE);
@@ -524,7 +526,7 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     const auto strand_desc=buffer_desc(g->strand_bytes,
                                         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    const auto length_desc=buffer_desc(g->guide_length_bytes,D3D12_RESOURCE_FLAG_NONE);
+    const auto length_desc=buffer_desc(g->guide_static_bytes,D3D12_RESOURCE_FLAG_NONE);
     const auto strand_info=impl_->device->GetResourceAllocationInfo(0,1,&strand_desc);
     const auto length_info=impl_->device->GetResourceAllocationInfo(0,1,&length_desc);
     const auto mutable_info=impl_->device->GetResourceAllocationInfo(0,1,&uav_desc);
@@ -552,14 +554,14 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
               impl_->device.Get(),g->strand_bytes,D3D12_HEAP_TYPE_DEFAULT,
               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
               D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    g->guide_rest_lengths=allocate_buffer(impl_->device.Get(),g->guide_length_bytes,
+    g->guide_static_data=allocate_buffer(impl_->device.Get(),g->guide_static_bytes,
                D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_FLAG_NONE,
                D3D12_RESOURCE_STATE_COPY_DEST);
     g->tangents=allocate_buffer(impl_->device.Get(),g->bytes,D3D12_HEAP_TYPE_DEFAULT,
                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     auto upload=allocate_buffer(impl_->device.Get(),g->bytes+g->root_history_bytes+
-               g->guide_length_bytes,D3D12_HEAP_TYPE_UPLOAD,
+               g->guide_static_bytes,D3D12_HEAP_TYPE_UPLOAD,
               D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_GENERIC_READ);
     void* mapped=nullptr;
     D3D12_RANGE none{0,0};
@@ -581,6 +583,10 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
             lengths[static_cast<std::size_t>(guide)*source.vertices_per_strand+v]=
                 source.rest_segment_lengths[base+v];
     }
+    std::memcpy(static_cast<char*>(mapped)+g->bytes+g->root_history_bytes+
+                    guide_length_bytes,
+                source.follower_root_offsets.data(),
+                source.follower_root_offsets.size()*sizeof(Float4));
     upload->Unmap(0,nullptr);
 
     auto* cmd=impl_->begin();
@@ -588,15 +594,15 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
         cmd->CopyBufferRegion(target,0,upload.Get(),0,g->bytes);
     cmd->CopyBufferRegion(g->root_previous_previous.Get(),0,
                           upload.Get(),g->bytes,g->root_history_bytes);
-    cmd->CopyBufferRegion(g->guide_rest_lengths.Get(),0,upload.Get(),
-        g->bytes+g->root_history_bytes,g->guide_length_bytes);
+    cmd->CopyBufferRegion(g->guide_static_data.Get(),0,upload.Get(),
+        g->bytes+g->root_history_bytes,g->guide_static_bytes);
     transition(cmd,g->current.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cmd,g->previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     transition(cmd,g->rest.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    transition(cmd,g->guide_rest_lengths.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+    transition(cmd,g->guide_static_data.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                          D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(cmd,g->root_previous_previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -736,7 +742,7 @@ void DeviceContext::record_length_wind(ID3D12GraphicsCommandList* cmd,
     cmd->SetComputeRootUnorderedAccessView(2,g.root_previous_previous->GetGPUVirtualAddress());
     cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
     cmd->SetComputeRootShaderResourceView(5,g.rest->GetGPUVirtualAddress());
-    cmd->SetComputeRootShaderResourceView(6,g.guide_rest_lengths->GetGPUVirtualAddress());
+    cmd->SetComputeRootShaderResourceView(6,g.guide_static_data->GetGPUVirtualAddress());
     cmd->SetComputeRoot32BitConstants(4,sizeof(c)/4,&c,0);
     cmd->Dispatch(g.groups,1,1);
 }
@@ -758,7 +764,7 @@ void DeviceContext::record_followers(ID3D12GraphicsCommandList* cmd,
     cmd->SetComputeRootUnorderedAccessView(2,g.root_previous_previous->GetGPUVirtualAddress());
     cmd->SetComputeRootUnorderedAccessView(3,g.strand_data->GetGPUVirtualAddress());
     cmd->SetComputeRootShaderResourceView(5,g.rest->GetGPUVirtualAddress());
-    cmd->SetComputeRootShaderResourceView(6,g.guide_rest_lengths->GetGPUVirtualAddress());
+    cmd->SetComputeRootShaderResourceView(6,g.guide_static_data->GetGPUVirtualAddress());
     cmd->SetComputeRootUnorderedAccessView(7,g.tangents->GetGPUVirtualAddress());
     cmd->SetComputeRoot32BitConstants(4,sizeof(data)/4,&data,0);
     cmd->Dispatch(g.groups,1,1);
