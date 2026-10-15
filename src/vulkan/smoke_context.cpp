@@ -165,6 +165,7 @@ struct DeviceContext::Impl {
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipeline strand_pipeline = VK_NULL_HANDLE;
+    VkPipeline velocity_shock_pipeline = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkCommandBuffer diagnostic_commands = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
@@ -181,6 +182,7 @@ struct DeviceContext::Impl {
             if (fence) vkDestroyFence(device, fence, nullptr);
             if (queries) vkDestroyQueryPool(device, queries, nullptr);
             if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
+            if (velocity_shock_pipeline) vkDestroyPipeline(device, velocity_shock_pipeline, nullptr);
             if (strand_pipeline) vkDestroyPipeline(device, strand_pipeline, nullptr);
             if (pipeline) vkDestroyPipeline(device, pipeline, nullptr);
             if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
@@ -345,6 +347,22 @@ struct DeviceContext::Impl {
         vkDestroyShaderModule(device,strand_module,nullptr);
         verify(strand_result,"create strand-level pipeline");
         strand_pipeline=created_strand;
+        const auto vsp_shader=load_shader(spirv.parent_path()/"loxfx_velocity_shock.spv");
+        VkShaderModuleCreateInfo vsp_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        vsp_info.codeSize=vsp_shader.size()*sizeof(std::uint32_t);
+        vsp_info.pCode=vsp_shader.data();
+        VkShaderModule vsp_module=VK_NULL_HANDLE;
+        verify(vkCreateShaderModule(device,&vsp_info,nullptr,&vsp_module),
+               "create velocity-shock module");
+        sci.module=vsp_module;
+        sci.pName="VelocityShockPropagation";
+        cpi.stage=sci;
+        VkPipeline created_vsp=VK_NULL_HANDLE;
+        const VkResult vsp_result=vkCreateComputePipelines(
+            device,VK_NULL_HANDLE,1,&cpi,nullptr,&created_vsp);
+        vkDestroyShaderModule(device,vsp_module,nullptr);
+        verify(vsp_result,"create velocity-shock pipeline");
+        velocity_shock_pipeline=created_vsp;
 
         VkCommandPoolCreateInfo poolci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolci.queueFamilyIndex=family;
@@ -649,6 +667,28 @@ void DeviceContext::record_strand_level(VkCommandBuffer cb,const GroomState& sta
                        0,sizeof(data),&data);
     vkCmdDispatch(cb,g.strand_groups,1,1);
 }
+void DeviceContext::record_velocity_shock(VkCommandBuffer cb,
+                                          const GroomState& state) const {
+    if(!impl_||!state.impl_||!cb||state.impl_->context_id!=impl_.get())
+        throw std::invalid_argument("velocity-shock pass belongs to another Vulkan context");
+    const auto& g=*state.impl_;
+    struct VspConstants {
+        std::uint32_t vertices, followers, guides, reserved;
+    };
+    const VspConstants data{g.vertices,g.followers,g.guides,0};
+    // Stage-two output and the integration buffers must be visible to VSP.
+    memory_barrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+    vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,
+                      impl_->velocity_shock_pipeline);
+    vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipeline_layout,
+                            0,1,&g.strand_set,0,nullptr);
+    vkCmdPushConstants(cb,impl_->pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,
+                       0,sizeof(data),&data);
+    vkCmdDispatch(cb,g.groups,1,1);
+}
+
 VkCommandBuffer DeviceContext::begin_diagnostic_commands(){
     if(!impl_)throw std::logic_error("context was moved");
     return impl_->begin_diagnostics();
