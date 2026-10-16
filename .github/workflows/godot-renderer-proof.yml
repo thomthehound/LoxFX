@@ -20,7 +20,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers xvfb xauth \
-            libgl1-mesa-dri vulkan-validationlayers spirv-tools
+            libgl1-mesa-dri vulkan-validationlayers spirv-tools \
+            spirv-cross glslang-tools
       - name: Install official DXC
         shell: bash
         run: |
@@ -92,12 +93,19 @@ jobs:
             -fspv-entrypoint-name=main -O0 \
             -Fo "$proof/integration.noopt.spv" \
             shaders/IntegrationAndGlobalShapeConstraints.hlsl
-          for variant in original opt legalize noopt; do
+          # A normal compiler-produced GLSL intermediate preserves the
+          # actual DXC->SPIR-V dataflow while presenting Godot's own
+          # reflection/optimizer a GLSL-shaped SPIR-V module.
+          spirv-cross "$proof/integration.original.spv" --version 450 \
+            --vulkan-semantics --output "$proof/integration.glsl.comp"
+          glslangValidator -V --target-env vulkan1.2 -S comp \
+            -o "$proof/integration.glsl.spv" "$proof/integration.glsl.comp"
+          for variant in original opt legalize noopt glsl; do
             spirv-val --target-env vulkan1.2 "$proof/integration.$variant.spv"
           done
 
           passed=""
-          for variant in original opt legalize noopt; do
+          for variant in original opt legalize noopt glsl; do
             echo "===== BEGIN RENDERER PROOF: $variant ====="
             cp "$proof/integration.$variant.spv" "$original"
             if timeout 70s xvfb-run -a "$engine" --path "$proof" \
