@@ -56,6 +56,14 @@ Measure simulation GPU time, producer/consumer synchronization, transfer
 latency, render cost, frame pacing and visual equivalence on the same scene,
 on both applicable native backends. Keep the standalone SDK baseline.
 
+**Progress:** `LoxFXGroom3D::get_renderer_interop_status()` now distinguishes
+an actual Godot RenderingDevice from the separate SDK diagnostic device and
+reports the absence of verified native-handle borrowing, queue submission
+and GPU-resident publication. This closes no output-transfer or performance
+opportunity: see [source-backed Godot interop audit](GODOT_RENDERER_INTEROP.md).
+The next experiment must prove renderer-thread scheduling, native device/queue
+identity, safe buffer ownership and GPU consumer visibility.
+
 **Status:** blocked pending GPU interoperability and real visual rendering.
 **Acceptance:** no forced frame-time GPU->CPU readback, accurate quality and
 sync, and quantified transfer/whole-frame improvement on actual hardware.
