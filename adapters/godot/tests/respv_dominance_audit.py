@@ -326,7 +326,7 @@ def compile_tools(upstream, probe, bench, work):
         return true;
     }"""
     )
-    entry_marker = "    bool Shader::parse(const void *pData, size_t pSize) {"
+    entry_marker = "    bool Shader::parse(const void *pData, size_t pSize, bool pInlineFunctions) {"
     if precompute.count(entry_marker) != 1:
         raise RuntimeError("Unable to locate Shader::parse")
     precompute = precompute.replace(entry_marker, dom_function + entry_marker)
