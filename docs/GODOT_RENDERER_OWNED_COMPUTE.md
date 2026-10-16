@@ -12,6 +12,27 @@ outside the engine scheduler. See
 `adapters/godot/tests/renderer_owned_compute.gd` and the dedicated
 software-Vulkan Xvfb CI step.
 
+## SPIR-V entry-point compatibility
+
+The initial Forward+ test successfully selected Mesa Vulkan and launched
+Godot 4.7.2, but both compute pipelines failed creation (Vulkan error -13).
+Source inspection isolated an entry-point ABI mismatch: Godot's
+`RenderingDeviceDriverVulkan` sets the Vulkan shader-stage `pName` to
+`"main"` during shader creation, while LoxFX's independent native
+`DeviceContext` deliberately names the HLSL entry functions.
+
+The optional Godot adapter build now compiles separate
+`shaders/godot/loxfx_integration.spv` and
+`shaders/godot/loxfx_follower_publish.spv` from the **same HLSL sources**,
+using DXC `-fspv-entrypoint-name=main`. Native Vulkan SPIR-V binaries
+continue to export their original names and are built unmodified.
+The Godot runtime test consumes only the `main` variants; native Vulkan
+CI continues testing the standard artifacts. No shader-physics fork or
+byte-patching of SPIR-V is necessary.
+
+The Godot-stage compile and numerical-readback gate must pass before we
+call the renderer-owned experiment functional.
+
 The GPU producer is LoxFX's **unmodified**
 `IntegrationAndGlobalShapeConstraints.hlsl`, compiled by our existing
 native shader build to `loxfx_integration.spv`. The GPU consumer is our
