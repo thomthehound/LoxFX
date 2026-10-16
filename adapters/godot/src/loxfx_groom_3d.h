@@ -11,6 +11,7 @@
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 
 #include <optional>
 #include <cstdint>
@@ -60,6 +61,10 @@ public:
     int get_native_diagnostic_context_count() const;
     ::godot::Vector3 get_native_diagnostic_root_position() const;
     ::godot::String get_native_diagnostic_backend() const;
+    // Observe the active Godot renderer without borrowing native GPU handles.
+    // The report is a capability preflight, not authorization to record work
+    // into Godot's queue or access its device resources.
+    ::godot::Dictionary get_renderer_interop_status() const;
 
     bool load_tfx_bytes(const ::godot::PackedByteArray& tfx,
                         int followers_per_guide = 0,
