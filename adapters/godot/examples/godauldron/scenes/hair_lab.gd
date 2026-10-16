@@ -138,6 +138,8 @@ func godauldron_capture_metadata() -> Dictionary:
     details["native_simulation"] = true
     details["native_backend"] = (_lox_groom.get_native_diagnostic_backend()
         if _lox_groom != null else "none")
+    details["renderer_interop"] = (_lox_groom.get_renderer_interop_status()
+        if _lox_groom != null else {})
     details["simulated_steps"] = (_lox_groom.get_native_diagnostic_steps()
         if _lox_groom != null else 0)
     details["stage_time_seconds"] = _elapsed

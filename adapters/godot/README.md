@@ -136,6 +136,21 @@ the generic portrait stage, see [optional Godauldron package]
 (examples/godauldron/README.md). It is provider-owned and is never loaded
 by LoxFX's core or Godauldron's built-in experiment catalog.
 
+## Renderer interoperability preflight
+
+Call `groom.get_renderer_interop_status()` to inspect the actual Godot
+renderer-device availability, reported graphics-adapter identity and current
+SDK-owned diagnostic mode. This method does **not** borrow Vulkan/D3D12
+native handles, submit work onto Godot's queue, promise buffer-sharing
+capabilities, or claim GPU-resident rendering. Headless/Compatibility mode
+can report that Godot has no compatible RenderingDevice without breaking
+SDK-owned diagnostic compute.
+
+The staged renderer-native negotiation and synchronization requirements are
+documented in [Godot renderer handoff](../../docs/GODOT_RENDERER_INTEROP.md).
+The next implementation must run inside the actual renderer lifecycle and
+must not manufacture Godot RIDs from native GPU pointers.
+
 ## Next acceptance criteria
 
 1. Test against the selected Godot native API on Linux and Windows.
