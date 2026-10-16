@@ -5,6 +5,7 @@
 
 #include "loxfx/integration_parameters.h"
 #include "loxfx/length_wind.h"
+#include "loxfx/native_frame_parameters.h"
 #include "loxfx/prepared_groom.h"
 #include "loxfx/strand_motion.h"
 #include <d3d12.h>
@@ -58,6 +59,12 @@ public:
 
     // Diagnostic upload waits explicitly once; NO per-stage CPU readback.
     [[nodiscard]] GroomState prepare_diagnostic(const PreparedGroom& groom);
+    // Record the six LoxFX passes on a caller-owned command list.
+    // No submission, waits, GPU readback or command-list ownership.
+    // The host must discard a partially recorded list on validation error.
+    void record_frame(ID3D12GraphicsCommandList* command_list,
+                      const GroomState& groom,
+                      const NativeFrameParameters& parameters) const;
     // Backend-native work recording: no queue submission, fence or CPU wait.
     // Applies strand-level VSP transforms to guide vertices 2+.
     // Caller records integration and strand-level calculation first.
