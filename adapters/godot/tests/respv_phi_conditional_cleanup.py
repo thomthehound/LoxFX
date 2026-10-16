@@ -61,21 +61,16 @@ def gated_sources(cpp, header, minimum_phi_count=0):
 
 """
     if minimum_phi_count:
-        # Preserve the historical cleanup on sparse-Phi shaders without
-        # constructing an O(instruction count) schedule-position vector.
-        if minimum_phi_count < 1:
-            raise ValueError("Invalid Phi-count threshold")
-        a = "        requiresFinalPhiCleanup = false;\\n        if (!phis.empty()) {"
-        b = (
-            "        requiresFinalPhiCleanup = !phis.empty() && phis.size() < " +
-            str(minimum_phi_count) + ";\\n" +
-            "        if (phis.size() >= " + str(minimum_phi_count) +
-            " && !phis.empty()) {"
-        )
-        if insertion.count(a.replace("\\\\n", "\\n")) != 1:
+        # Sparse-Phi shaders do not warrant allocating instruction-position
+        # metadata. They conservatively retain the historical cleanup.
+        a = "        requiresFinalPhiCleanup = false;\n        if (!phis.empty()) {"
+        b = ("        requiresFinalPhiCleanup = !phis.empty() && phis.size() < " +
+             str(minimum_phi_count) + ";\n" +
+             "        if (phis.size() >= " + str(minimum_phi_count) +
+             " && !phis.empty()) {")
+        if insertion.count(a) != 1:
             raise RuntimeError("Scheduling gate anchor changed")
-        insertion = insertion.replace(a.replace("\\\\n", "\\n"),
-                                      b.replace("\\\\n", "\\n"))
+        insertion = insertion.replace(a, b)
     cpp = cpp.replace(anchor, insertion + anchor)
     hook = """        if (!optimizerCompactPhis(context)) {
             return false;
