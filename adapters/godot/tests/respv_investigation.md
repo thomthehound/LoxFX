@@ -65,6 +65,19 @@ The specialization-aware differential microbenchmark now runs in CI after GPU se
 
 **Disposition:** The rewrite restores valid SPIR-V for all six known invalid switch cases, but the first performance sample does **not** establish a free or faster optimization. The ~0.073 µs (+3.02%) cached-opt regression in switch-in-loop warrants replication and profiling; smaller shifts also appear on unaffected controls, so avoid overinterpreting one shared runner. Keep this as an experiment, compare an alternative that repairs the original switch-selector liveness accounting without unconditional extra work, and measure on LoxFX's real modules before accepting it. The significant measured gain from omitting the final Phi pass is a separate workload and cannot simply be subtracted from these switch deltas.
 
+## Switch selector alternatives and minimal-module evidence (2026-10-16)
+
+A three-way source-only experiment compared stock re-SPIRV, direct `OpBranch` lowering, and retaining the original `OpSwitch` selector without fabricating another integer-constant dependency.
+
+- **32 valid switch test configurations** (switch and switch-in-loop, multiple compiler optimization levels and function inlining, four specialization sets). Six configurations produced invalid output with stock re-SPIRV. Both repairs generated valid output in all 32 cases, repaired those same six failures, and matched original GPU results.
+- **Four additional valid no-integer-`OpConstant` inputs:** a hand-assembled `OpSwitch` whose selector is an `OpSpecConstant` and whose module contains no integer `OpConstant`. Stock re-SPIRV rejects all four in parsing because it globally insists on a synthetic fallback selector. Both candidates, with the obsolete parser requirement removed, validated and produced the correct Vulkan results for all four.
+- The retain-selector variant changes only switch-selector lifetime accounting and removes the synthetic constant dependency; its parser fast path has no new global preprocessing. Direct-branch lowering additionally changes structured merge/terminator representation for fully resolved switches.
+- The first three-way timings are noisy. Cache-only switch O0 valid baseline: 2.9682 µs stock, 2.9681 µs retained selector, 2.9924 µs direct branch. Switch-in-loop O0: 3.2310 µs stock, 3.3020 µs retained selector, 3.2708 µs direct branch. Other controls fluctuate up and down by approximately one percent. Shared-runner results do not establish a consistent winner. Continue to treat optimizer-only and parse+optimizer costs separately.
+
+[Validated three-way GPU and performance experiment](https://github.com/thomthehound/LoxFX/actions/runs/38959601547); [minimal no-integer-constant specialization experiment](https://github.com/thomthehound/LoxFX/actions/runs/38960006302).
+
+**Disposition:** There are now two independent switch defects: the dangling borrowed selector after full resolution, and the parser's unconditional reliance on any integer `OpConstant`. Both tested repairs address both defects. A final switch design should consider exact DCE accounting, CFG simplicity, output SPIR-V quality, compiler latency, and broader semantic tests. No production change or upstream patch selected.
+
 ## Unresolved questions and next experiments
 
 1. **Prove or falsify the modern Phi scheduling invariant.** Construct validated shaders with a predecessor terminator scheduled after a dependent `OpPhi`; exercise pruned switch edges, duplicate targets, nested selections, loops, backedges, continue/merge combinations, Phi chains, multi-function and inlining. Instrument final-pass mutations and compare generated CFG/operands with the actual predecessor sets. For valid cases, compare GPU results, not only `spirv-val`.
