@@ -51,6 +51,9 @@ jobs:
             spirv-dis "$shader" | grep -E \
               'OpEntryPoint|OpExecutionMode|OpDecorate .* (Binding|DescriptorSet)' | head -60
             test "$(spirv-dis "$shader" | grep -c 'OpEntryPoint GLCompute .* "main"')" -eq 1
+            if [[ "$shader" == *loxfx_integration.spv ]]; then
+              spirv-dis "$shader" | grep -E 'OpDecorate .* SpecId 0'
+            fi
           done
       - name: Download Godot 4.7.2 for live renderer-owned execution
         shell: bash
