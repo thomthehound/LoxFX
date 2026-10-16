@@ -140,18 +140,17 @@ struct NativeDiagnostic::Impl {
         auto& context = device->context;
         auto cmd = context.begin_diagnostic_commands();
         NativeFrameParameters frame{};
-        frame.integration.time_step = seconds;
-        frame.integration.gravity = gravity;
-        frame.integration.damping = damping;
-        frame.integration.root_translation_x = rx;
-        frame.integration.root_translation_y = ry;
-        frame.integration.root_translation_z = rz;
+        frame.time_step = seconds;
+        frame.gravity = gravity;
+        frame.damping = damping;
+        frame.root_translation_x = rx;
+        frame.root_translation_y = ry;
+        frame.root_translation_z = rz;
         frame.strand_motion.velocity_shock_coefficient = 0.0f;
         frame.strand_motion.acceleration_threshold = 100.0f;
         frame.local_shape_stiffness = 0.6f;
-        frame.length_wind.time_step = seconds;
-        frame.length_wind.length_iterations = 4;
-        frame.length_wind.winds[0] = {wx, wy, wz, 0.0f};
+        frame.length_iterations = 4;
+        frame.winds[0] = {wx, wy, wz, 0.0f};
         // The Godot diagnostic is now a consumer of the same complete,
         // submit-free recorder that a renderer-owned queue can invoke.
         context.record_frame(cmd, *state, frame);
