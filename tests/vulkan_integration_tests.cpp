@@ -106,6 +106,52 @@ int main(int argc,char** argv) {
         gpu::DeviceContext context(argv[1]);
         const VkDevice shared=context.native_device();
         check(shared!=VK_NULL_HANDLE,"standalone device created");
+        // Host-owned GPU upload: allocation/packing cannot create a
+        // diagnostic submission. The two transfer batches share a single
+        // caller-owned command buffer and one caller-owned completion fence.
+        const auto uploads_before=context.gpu_submission_count();
+        auto unrecorded=context.prepare_upload(*a);
+        bool premature_finish_rejected=false;
+        try {
+            (void)std::move(unrecorded).finish_after_completion();
+        } catch (const std::logic_error&) {
+            premature_finish_rejected=true;
+        }
+        check(premature_finish_rejected,
+              "Vulkan allowed finalizing an unrecorded upload");
+        auto staged_a=context.prepare_upload(*a);
+        auto staged_b=context.prepare_upload(*b);
+        check(context.gpu_submission_count()==uploads_before,
+              "Vulkan groom allocation performed hidden queue submission");
+        const auto upload_external=context.borrowed_handles();
+        HostBatch upload_host(upload_external.logical);
+        upload_host.init(upload_external.queue_family);
+        upload_host.begin();
+        context.record_initial_upload(upload_host.commands,staged_a);
+        context.record_initial_upload(upload_host.commands,staged_b);
+        check(context.gpu_submission_count()==uploads_before,
+              "Vulkan upload recording submitted or waited on the GPU");
+        reject([&] { context.record_initial_upload(upload_host.commands,staged_a); },
+               "Vulkan accepted duplicate staged upload recording");
+        upload_host.submit(upload_external.compute_queue);
+        auto uploaded_a=std::move(staged_a).finish_after_completion();
+        auto uploaded_b=std::move(staged_b).finish_after_completion();
+        check(context.gpu_submission_count()==uploads_before,
+              "host-controlled upload was counted as diagnostic submission");
+        const auto initial_a=context.diagnostic_read_positions(uploaded_a);
+        const auto initial_b=context.diagnostic_read_positions(uploaded_b);
+        check(initial_a.size()==a->rest_positions.size() &&
+              initial_b.size()==b->rest_positions.size(),
+              "host-recorded Vulkan groom upload sizes");
+        for(std::size_t i=0;i<initial_a.size();++i)
+            check(initial_a[i].x==a->rest_positions[i].x &&
+                  initial_a[i].y==a->rest_positions[i].y,
+                  "host-uploaded Vulkan groom A rest positions");
+        for(std::size_t i=0;i<initial_b.size();++i)
+            check(initial_b[i].x==b->rest_positions[i].x &&
+                  initial_b[i].y==b->rest_positions[i].y,
+                  "host-uploaded Vulkan groom B rest positions");
+
         const auto first=context.prepare(*a);
         const auto second=context.prepare(*b);
         check(context.native_device()==shared,"one device for two groom uploads");

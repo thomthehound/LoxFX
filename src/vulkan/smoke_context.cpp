@@ -526,6 +526,29 @@ VkBuffer GroomState::tangents_buffer() const noexcept {
     return impl_?impl_->tangents.handle:VK_NULL_HANDLE;
 }
 
+struct PendingGroomUpload::Impl {
+    GroomState groom;
+    std::unique_ptr<Buffer> staging;
+    bool recorded = false;
+    Impl(GroomState&& state, std::unique_ptr<Buffer> upload)
+        : groom(std::move(state)), staging(std::move(upload)) {}
+};
+
+PendingGroomUpload::PendingGroomUpload(std::unique_ptr<Impl> p) noexcept
+    : impl_(std::move(p)) {}
+PendingGroomUpload::~PendingGroomUpload() = default;
+PendingGroomUpload::PendingGroomUpload(PendingGroomUpload&&) noexcept = default;
+PendingGroomUpload& PendingGroomUpload::operator=(PendingGroomUpload&&) noexcept = default;
+GroomState PendingGroomUpload::finish_after_completion() && {
+    if (!impl_ || !impl_->recorded)
+        throw std::logic_error("upload was not recorded or was already consumed");
+    // The caller has explicitly waited for its completion fence. Releasing
+    // staging is safe only now; never infer completion from a CPU recording.
+    GroomState completed = std::move(impl_->groom);
+    impl_.reset();
+    return completed;
+}
+
 DeviceContext::DeviceContext(const std::filesystem::path& spirv)
 :impl_(std::make_shared<Impl>()){
     impl_->initialize_standalone();
@@ -540,7 +563,7 @@ DeviceContext::~DeviceContext()=default;
 DeviceContext::DeviceContext(DeviceContext&&) noexcept=default;
 DeviceContext& DeviceContext::operator=(DeviceContext&&) noexcept=default;
 
-GroomState DeviceContext::prepare(const PreparedGroom& source) {
+PendingGroomUpload DeviceContext::prepare_upload(const PreparedGroom& source) {
     if(!impl_)throw std::logic_error("moved-from device context");
     check_groom(source);
     const VkDeviceSize bytes=static_cast<VkDeviceSize>(source.rest_positions.size())*sizeof(Float4);
@@ -661,15 +684,14 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     vkUpdateDescriptorSets(impl_->device,
         static_cast<std::uint32_t>(motion_writes.size()),motion_writes.data(),0,nullptr);
 
-    // One temporary staging image, reclaimed immediately AFTER the explicit
-    // initialization submit has completed. Never retained by a groom.
-    Buffer staging;
-    staging.create(impl_->physical,impl_->device,bytes+root_bytes+guide_static_bytes,
+    // Host-retained staging: never release before the host's upload fence.
+    auto staging=std::make_unique<Buffer>();
+    staging->create(impl_->physical,impl_->device,bytes+root_bytes+guide_static_bytes,
                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped=nullptr;
     creation_checkpoint();
-    verify(vkMapMemory(impl_->device,staging.memory,0,bytes+root_bytes+guide_static_bytes,0,&mapped),
+    verify(vkMapMemory(impl_->device,staging->memory,0,bytes+root_bytes+guide_static_bytes,0,&mapped),
            "map initial upload");
     std::memcpy(mapped,source.rest_positions.data(),static_cast<std::size_t>(bytes));
     auto* roots=reinterpret_cast<Float4*>(static_cast<char*>(mapped)+bytes);
@@ -693,9 +715,24 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     std::memcpy(static_cast<char*>(mapped)+bytes+root_bytes+guide_length_bytes,
                 source.follower_root_offsets.data(),
                 source.follower_root_offsets.size()*sizeof(Float4));
-    vkUnmapMemory(impl_->device,staging.memory);
-    auto cb=impl_->begin_diagnostics();
-    for(VkBuffer dest:{groom->current.handle,groom->previous.handle,groom->rest.handle}) {
+    vkUnmapMemory(impl_->device,staging->memory);
+    return PendingGroomUpload(std::make_unique<PendingGroomUpload::Impl>(
+        GroomState(std::move(groom)), std::move(staging)));
+}
+
+void DeviceContext::record_initial_upload(VkCommandBuffer cb,
+                                          PendingGroomUpload& pending) const {
+    if (!impl_ || !cb || !pending.impl_ || pending.impl_->recorded)
+        throw std::invalid_argument("invalid or already recorded Vulkan groom upload");
+    auto& state=pending.impl_->groom;
+    if (!state.impl_ || state.impl_->context_id != impl_.get())
+        throw std::invalid_argument("Vulkan staged groom belongs to another device");
+    const auto& g=*state.impl_;
+    const auto& staging=*pending.impl_->staging;
+    const VkDeviceSize bytes=g.vertex_bytes;
+    const VkDeviceSize root_bytes=g.root_history_bytes;
+    const VkDeviceSize guide_static_bytes=g.guide_static_bytes;
+    for(VkBuffer dest:{g.current.handle,g.previous.handle,g.rest.handle}) {
         VkBufferCopy copy{};
         copy.size=bytes;
         vkCmdCopyBuffer(cb,staging.handle,dest,1,&copy);
@@ -703,18 +740,23 @@ GroomState DeviceContext::prepare(const PreparedGroom& source) {
     VkBufferCopy roots_copy{};
     roots_copy.srcOffset=bytes;
     roots_copy.size=root_bytes;
-    vkCmdCopyBuffer(cb,staging.handle,
-                    groom->root_previous_previous.handle,1,&roots_copy);
-    VkBufferCopy length_copy{};
-    length_copy.srcOffset=bytes+root_bytes;
-    length_copy.size=guide_static_bytes;
-    vkCmdCopyBuffer(cb,staging.handle,
-                    groom->guide_static_data.handle,1,&length_copy);
+    vkCmdCopyBuffer(cb,staging.handle,g.root_previous_previous.handle,1,&roots_copy);
+    VkBufferCopy static_copy{};
+    static_copy.srcOffset=bytes+root_bytes;
+    static_copy.size=guide_static_bytes;
+    vkCmdCopyBuffer(cb,staging.handle,g.guide_static_data.handle,1,&static_copy);
     memory_barrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,
                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                    VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
-    impl_->submit_diagnostics();
-    return GroomState(std::move(groom));
+    pending.impl_->recorded=true;
+}
+
+GroomState DeviceContext::prepare(const PreparedGroom& source) {
+    auto pending=prepare_upload(source);
+    const auto cmd=begin_diagnostic_commands();
+    record_initial_upload(cmd,pending);
+    submit_diagnostic_and_wait();
+    return std::move(pending).finish_after_completion();
 }
 
 void DeviceContext::record_frame(VkCommandBuffer cb, const GroomState& state,
