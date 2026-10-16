@@ -45,6 +45,7 @@ jobs:
           set -euo pipefail
           cmake --install build/gpu --prefix "$RUNNER_TEMP/loxfx-installed"
           test ! -e "$RUNNER_TEMP/loxfx-installed/include/loxfx/vulkan"
+          test ! -e "$RUNNER_TEMP/loxfx-installed/include/loxfx/native_frame_parameters.h"
           ! grep -R 'LoxFX::Vulkan' "$RUNNER_TEMP/loxfx-installed/lib/cmake/LoxFX"
 
   vulkan-windows-build:
@@ -90,6 +91,8 @@ jobs:
           cmake --install build/gpu --config Release --prefix "$env:RUNNER_TEMP/loxfx-installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $headers = Join-Path $env:RUNNER_TEMP 'loxfx-installed/include/loxfx/vulkan'
+          $internalFrame = Join-Path $env:RUNNER_TEMP 'loxfx-installed/include/loxfx/native_frame_parameters.h'
+          if (Test-Path $internalFrame) { throw "Experimental frame recorder leaked into installed Core API" }
           if (Test-Path $headers) { throw "Experimental Vulkan headers leaked into SDK installation" }
           $exportFile = Get-ChildItem -Path "$env:RUNNER_TEMP/loxfx-installed" -Recurse -Filter 'LoxFXTargets.cmake' | Select-Object -First 1
           if (!$exportFile) { throw "Missing SDK exported targets" }
