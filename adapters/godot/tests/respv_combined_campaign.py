@@ -20,7 +20,7 @@ from respv_switch_selector_audit import keep_original_selector, allow_switch_wit
 from respv_phi_conditional_cleanup import gated_sources
 
 
-def build(upstream, evidence, probe_source, bench_source):
+def build(upstream, evidence, probe_source, bench_source, plain_bench_source):
     cpp = {}
     for variant in ("exact_reachability", "structured_corridor"):
         source = evidence / "variants" / variant / "re-spirv.cpp"
@@ -53,7 +53,8 @@ def build(upstream, evidence, probe_source, bench_source):
         includes = ["-I" + str(folder), "-I" + str(upstream),
                     "-I" + str(upstream / "external/SPIRV-Headers/include")]
         binaries = {}
-        for key, driver in (("probe", probe_source), ("bench", bench_source)):
+        for key, driver in (("probe", probe_source), ("bench", bench_source),
+                            ("plain_bench", plain_bench_source)):
             exe = folder / key
             checked(["c++", "-std=c++17", "-O2", "-DNDEBUG", *includes,
                      folder / "re-spirv.cpp", driver, "-o", exe],
@@ -63,9 +64,11 @@ def build(upstream, evidence, probe_source, bench_source):
     return tools
 
 
-def median(exe, shader, inline, spec, with_parse):
-    args = [exe, shader, "300" if with_parse else "500", str(inline)]
-    args.extend(str(spec[k]) for k in range(4))
+def median(exe, shader, inline, spec, with_parse, plain=False):
+    args = [exe, shader, "300" if with_parse else "500"]
+    if not plain:
+        args.append(str(inline))
+        args.extend(str(spec[k]) for k in range(4))
     if with_parse:
         args.append("parse-run")
     return float(checked(args, "combined benchmark").strip())
@@ -78,13 +81,14 @@ def main():
     p.add_argument("--work", type=Path, required=True)
     p.add_argument("--probe", type=Path, required=True)
     p.add_argument("--bench", type=Path, required=True)
+    p.add_argument("--plain-bench", type=Path, required=True)
     p.add_argument("--oracle", type=Path, required=True)
     p.add_argument("--loxfx", type=Path, nargs=2, required=True)
     args = p.parse_args()
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
     tools = build(args.upstream.resolve(), args.dominance_evidence.resolve(),
-                  args.probe.resolve(), args.bench.resolve())
+                  args.probe.resolve(), args.bench.resolve(), args.plain_bench.resolve())
     inputs = work / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
     outputs = work / "outputs"
@@ -145,21 +149,21 @@ def main():
         print("COMBINED_SEMANTIC_FAMILY:", family, flush=True)
 
     bench_inputs = [
-        ("loxfx_integration", args.loxfx[0].resolve(), 0, SPECS[0]),
-        ("loxfx_follower", args.loxfx[1].resolve(), 0, SPECS[0]),
+        ("loxfx_integration", args.loxfx[0].resolve(), 0, SPECS[0], True),
+        ("loxfx_follower", args.loxfx[1].resolve(), 0, SPECS[0], True),
         ("switch_o0", inputs / "nested_switch.O0-stripped.spv", 0, SPECS[0]),
-        ("switch_o0_inlined", inputs / "nested_switch.O0-stripped.spv", 1, SPECS[2]),
-        ("nested_join", inputs / "sibling_merges.O0-stripped.spv", 1, SPECS[3]),
-        ("nested_loop", inputs / "two_loops.O.spv", 0, SPECS[1]),
-        ("early_return", inputs / "early_returns.O0-stripped.spv", 1, SPECS[0]),
+        ("switch_o0_inlined", inputs / "nested_switch.O0-stripped.spv", 1, SPECS[2], False),
+        ("nested_join", inputs / "sibling_merges.O0-stripped.spv", 1, SPECS[3], False),
+        ("nested_loop", inputs / "two_loops.O.spv", 0, SPECS[1], False),
+        ("early_return", inputs / "early_returns.O0-stripped.spv", 1, SPECS[0], False),
     ]
     flood = inputs / "phi_flood"
     flood.mkdir(parents=True, exist_ok=True)
     for phi_count in (16, 64, 128):
         bench_inputs.append(("phi_flood_" + str(phi_count),
-                             build_phi_flood(flood, phi_count), 0, SPECS[0]))
+                             build_phi_flood(flood, phi_count), 0, SPECS[0], True))
     bench_results = []
-    for label, shader, inline, spec in bench_inputs:
+    for label, shader, inline, spec, plain in bench_inputs:
         trials = {name: {"cached": [], "parse_run": []} for name in tools}
         for round_ in range(5):
             names = list(tools)
@@ -169,8 +173,8 @@ def main():
             for mode in modes:
                 for name in names:
                     trials[name][mode].append(
-                        median(tools[name]["bench"], shader, inline, spec,
-                               mode == "parse_run"))
+                        median(tools[name]["plain_bench" if plain else "bench"],
+                               shader, inline, spec, mode == "parse_run", plain))
         times = {name: {mode: round(statistics.median(values), 4)
                         for mode, values in ms.items()}
                  for name, ms in trials.items()}
