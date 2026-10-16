@@ -116,6 +116,59 @@ void submit_host_commands(gpu::DeviceContext& context,
     require(context.diagnostic_submission_count()==submissions,
             "host submission cannot change SDK diagnostic counter");
 }
+
+// One genuine host-owned initial-upload batch with two independent staged
+// grooms. The SDK cannot submit or reclaim either upload heap before this
+// caller-owned fence completes.
+std::pair<gpu::GroomState,gpu::GroomState>
+upload_two_host_grooms(gpu::DeviceContext& context,
+                       const loxfx::PreparedGroom& a,
+                       const loxfx::PreparedGroom& b) {
+    const auto external=context.borrowed_handles();
+    const auto before=context.diagnostic_submission_count();
+    auto pending_a=context.prepare_upload(a);
+    auto pending_b=context.prepare_upload(b);
+    require(context.diagnostic_submission_count()==before,
+            "D3D12 staged groom allocation submitted GPU work");
+    ComPtr<ID3D12CommandAllocator> allocator;
+    hrcheck(external.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE,
+            IID_PPV_ARGS(allocator.GetAddressOf())),"host upload command allocator");
+    ComPtr<ID3D12GraphicsCommandList> cmd;
+    hrcheck(external.device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_COMPUTE,
+            allocator.Get(),nullptr,IID_PPV_ARGS(cmd.GetAddressOf())),
+            "host upload command list");
+    context.record_initial_upload(cmd.Get(),pending_a);
+    context.record_initial_upload(cmd.Get(),pending_b);
+    require(context.diagnostic_submission_count()==before,
+            "D3D12 initial upload recorder performed hidden submission");
+    bool repeated=false;
+    try {
+        context.record_initial_upload(cmd.Get(),pending_a);
+    } catch(const std::invalid_argument&) {
+        repeated=true;
+    }
+    require(repeated,"D3D12 accepted a duplicate staged-upload recording");
+    hrcheck(cmd->Close(),"host close initial-upload command list");
+    ID3D12CommandList* commands[]={cmd.Get()};
+    external.compute_queue->ExecuteCommandLists(1,commands);
+    ComPtr<ID3D12Fence> fence;
+    hrcheck(external.device->CreateFence(0,D3D12_FENCE_FLAG_NONE,
+            IID_PPV_ARGS(fence.GetAddressOf())),"host upload fence");
+    hrcheck(external.compute_queue->Signal(fence.Get(),1),"host upload signal");
+    HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    require(event!=nullptr,"host upload completion event");
+    if(fence->GetCompletedValue()<1) {
+        const HRESULT hr=fence->SetEventOnCompletion(1,event);
+        if(FAILED(hr)) { CloseHandle(event); hrcheck(hr,"host upload fence event"); }
+        const DWORD result=WaitForSingleObject(event,INFINITE);
+        CloseHandle(event);
+        require(result==WAIT_OBJECT_0,"host upload completion wait");
+    } else CloseHandle(event);
+    require(context.diagnostic_submission_count()==before,
+            "host-owned D3D12 upload changed SDK diagnostic submission count");
+    return {std::move(pending_a).finish_after_completion(),
+            std::move(pending_b).finish_after_completion()};
+}
 }
 
 int main(int argc,char** argv) {
@@ -126,6 +179,23 @@ int main(int argc,char** argv) {
         require(first&&second,"groom preparation");
         gpu::DeviceContext context(argv[1],gpu::AdapterChoice::warp);
         require(context.native_device()!=nullptr,"native D3D12 WARP device");
+        // Exercise no-hidden-submit host-owned preparation independently
+        // of the backward-compatible synchronous diagnostic convenience.
+        auto [host_prepared_a,host_prepared_b]=upload_two_host_grooms(
+            context,*first,*second);
+        const auto host_a_positions=context.diagnostic_read_positions(host_prepared_a);
+        const auto host_b_positions=context.diagnostic_read_positions(host_prepared_b);
+        require(host_a_positions.size()==first->rest_positions.size() &&
+                host_b_positions.size()==second->rest_positions.size(),
+                "D3D12 host-owned initial groom sizes");
+        for(std::size_t i=0;i<host_a_positions.size();++i)
+            require(host_a_positions[i].x==first->rest_positions[i].x &&
+                    host_a_positions[i].y==first->rest_positions[i].y,
+                    "D3D12 host upload groom A rest positions");
+        for(std::size_t i=0;i<host_b_positions.size();++i)
+            require(host_b_positions[i].x==second->rest_positions[i].x &&
+                    host_b_positions[i].y==second->rest_positions[i].y,
+                    "D3D12 host upload groom B rest positions");
         auto g1=context.prepare_diagnostic(*first);
         auto g2=context.prepare_diagnostic(*second);
         require(g1.allocated_buffer_bytes()>=3*first->work.packed_total_vertices*
