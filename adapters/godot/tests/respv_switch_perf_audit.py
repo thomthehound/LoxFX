@@ -11,7 +11,7 @@ import json
 import statistics
 
 from respv_semantic_campaign import SPECS, checked
-from respv_switch_selector_audit import make_fix
+from respv_switch_selector_audit import make_fix, keep_original_selector
 
 # The first two controls exercise the known-invalid original O0 reduction.
 # The rest cover unaffected and normally valid specialization workloads.
@@ -56,7 +56,8 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
 
     baseline = (upstream / "re-spirv.cpp").read_text()
-    variants = {"current": baseline, "switch-as-branch": make_fix(baseline)}
+    variants = {"current": baseline, "switch-as-branch": make_fix(baseline),
+                "keep-original-selector": keep_original_selector(baseline)}
     executables = {}
     for name, source in variants.items():
         source_file = work / (name + ".cpp")
@@ -75,8 +76,7 @@ def main():
         if not shader.exists():
             raise RuntimeError("Missing previously compiled shader: " + str(shader))
         spec = SPECS[spec_index]
-        measurements = {"current": {"cached": [], "parse_run": []},
-                        "switch-as-branch": {"cached": [], "parse_run": []}}
+        measurements = {name: {"cached": [], "parse_run": []} for name in executables}
         for trial in range(5):
             order = list(executables)
             if trial % 2:
@@ -100,16 +100,19 @@ def main():
                 for mode in ("cached", "parse_run")
             }
         data["change_pct"] = {
-            mode: round(100 * (
-                data["metrics"]["switch-as-branch"][mode]["median_us"] /
-                data["metrics"]["current"][mode]["median_us"] - 1
-            ), 2) for mode in ("cached", "parse_run")
+            variant: {
+                mode: round(100 * (
+                    data["metrics"][variant][mode]["median_us"] /
+                    data["metrics"]["current"][mode]["median_us"] - 1
+                ), 2) for mode in ("cached", "parse_run")
+            } for variant in executables if variant != "current"
         }
         print("SWITCH_PERF:", json.dumps(data), flush=True)
         report.append(data)
     (work / "report.json").write_text(json.dumps({
         "baseline": "same upstream plus established loop liveness patch",
-        "variant": "fully reduced switches lowered to OpBranch",
+        "variants": ["fully reduced switch to OpBranch",
+                     "retain original OpSwitch selector dependency"],
         "units": "microseconds per operation; positive change_pct means regression",
         "trials_per_case": 5,
         "inner_batches_per_trial": 7,
