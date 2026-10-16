@@ -6,6 +6,7 @@
 
 #include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -51,6 +52,8 @@ void LoxFXGroom3D::_bind_methods() {
                     &LoxFXGroom3D::get_native_diagnostic_root_position);
     ClassDB::bind_method(D_METHOD("get_native_diagnostic_backend"),
                     &LoxFXGroom3D::get_native_diagnostic_backend);
+    ClassDB::bind_method(D_METHOD("get_renderer_interop_status"),
+                    &LoxFXGroom3D::get_renderer_interop_status);
     ClassDB::bind_method(D_METHOD("load_tfx_bytes", "data", "followers_per_guide",
                     "follower_root_radius", "follower_tip_separation", "seed"),
                     &LoxFXGroom3D::load_tfx_bytes, DEFVAL(0), DEFVAL(0.0),
@@ -458,6 +461,41 @@ Vector3 LoxFXGroom3D::get_native_diagnostic_root_position() const {
     if (native_ && native_root_valid_) return native_last_root_;
 #endif
     return {};
+}
+
+Dictionary LoxFXGroom3D::get_renderer_interop_status() const {
+    Dictionary report;
+    // No API-specific Vulkan or D3D12 handles cross this boundary.
+    // get_rendering_device() can be null on Compatibility/headless hosts.
+    // This method intentionally does not touch RenderingDevice directly or
+    // call get_driver_resource from the Godot scene thread. Native resource
+    // access requires a reviewed render-thread/command ownership contract.
+    const auto* rendering = RenderingServer::get_singleton();
+    const bool present = rendering && rendering->get_rendering_device();
+    report["renderer_device_available"] = present;
+    report["renderer_adapter_name"] = rendering
+        ? rendering->get_video_adapter_name() : String();
+    report["renderer_api_version"] = rendering
+        ? rendering->get_video_adapter_api_version() : String();
+    report["renderer_vendor"] = rendering
+        ? rendering->get_video_adapter_vendor() : String();
+    report["native_handles_borrowed"] = false;
+    report["device_shared_with_renderer"] = false;
+    report["gpu_resident_publication"] = false;
+    report["native_queue_submission_permitted"] = false;
+    report["synchronization_verified"] = false;
+    report["diagnostic_gpu_active"] = is_native_diagnostic_active();
+    report["diagnostic_backend"] = get_native_diagnostic_backend();
+    report["status"] = present
+        ? String("renderer_present_not_negotiated")
+        : String("renderer_unavailable");
+    report["reason"] = present
+        ? String("Native renderer handles may be discoverable, but command "
+                 "scheduling, buffer ownership and GPU synchronization "
+                 "are not yet negotiated.")
+        : String("The active Godot mode has no RenderingDevice; "
+                 "native renderer interoperability cannot be attempted.");
+    return report;
 }
 
 String LoxFXGroom3D::get_native_diagnostic_backend() const {
