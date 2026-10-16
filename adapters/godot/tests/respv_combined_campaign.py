@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Research-only re-SPIRV combined correctness and performance comparison.
 
-All source variants share the loop-Phi liveness correction and the proposed
-switch-selector repair; only the dominance strategy and final Phi cleanup differ.
-The exact reachability variant is the independent reference for byte equality.
+All variants share the loop-Phi liveness correction. The stock variant is
+included for performance diagnostics only; correctness comparison variants
+share the switch-selector repair and differ only in dominance/Phi handling.
+The exact reachability variant is the reference for binary equality.
 """
 from __future__ import annotations
 
@@ -35,10 +36,14 @@ def build(upstream, evidence, probe_source, bench_source, plain_bench_source):
     if structured.count(final_pass) != 1:
         raise RuntimeError("Unexpected historical Phi cleanup hook count")
     gated, gated_header = gated_sources(structured, (upstream / "re-spirv.h").read_text())
+    selective, selective_header = gated_sources(
+        structured, (upstream / "re-spirv.h").read_text(), minimum_phi_count=8)
     variants = {
+        "stock": ((upstream / "re-spirv.cpp").read_text(), None),
         "exact": (cpp["exact_reachability"], None),
         "structured": (structured, None),
         "gated": (gated, gated_header),
+        "selective": (selective, selective_header),
         "without_final": (structured.replace(final_pass, """        if (false && !optimizerCompactPhis(context)) {
             return false;
         }"""), None),
@@ -123,6 +128,8 @@ def main():
                     case = {"family": family, "opt": opt, "inline": inline, "spec": spec}
                     results = {}
                     for name, programs in tools.items():
+                        if name == "stock":
+                            continue  # Stock has known invalid O0 switch output.
                         dest = outputs / name / (
                             family + "." + opt + "." + str(inline) + "." +
                             str(spec[2]) + "." + str(spec[3]) + ".spv")
@@ -178,7 +185,8 @@ def main():
         times = {name: {mode: round(statistics.median(values), 4)
                         for mode, values in ms.items()}
                  for name, ms in trials.items()}
-        row = {"case": label, "times_us": times, "trials": trials}
+        row = {"case": label, "times_us": times, "trials": trials,
+               "stock_output_known_invalid": label.startswith("switch_o0")}
         bench_results.append(row)
         print("COMBINED_PERFORMANCE:", json.dumps({
             "case": label, "times_us": times}), flush=True)
