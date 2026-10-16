@@ -61,13 +61,47 @@ jobs:
         run: |
           set -euo pipefail
           python3 adapters/godot/tests/respv_diagnose.py \
-            --probe build/respv_probe --output build/respv-evidence \
+            --probe build/respv_probe --output build/respv-evidence/stock \
             build/respv-loxfx/shaders/godot/loxfx_integration.spv \
             build/respv-loxfx/shaders/godot/loxfx_follower_publish.spv \
             build/respv-loop-optimized.spv \
             build/respv-loop-unoptimized.spv
           cp build/respv-loxfx/shaders/godot/*.spv build/respv-evidence/
           cp build/respv-loop-*.spv build/respv-evidence/
+      - name: Check the candidate Phi reference-counting fix
+        run: |
+          set -euo pipefail
+          git -C build/re-spirv apply --check \
+            "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
+          git -C build/re-spirv apply \
+            "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
+          cmake --build build/respv-build --target re-spirv --parallel 2
+          c++ -std=c++17 -O2 \
+            -Ibuild/re-spirv -Ibuild/re-spirv/external/SPIRV-Headers/include \
+            adapters/godot/tests/respv_probe.cpp \
+            build/respv-build/libre-spirv.a -o build/respv_probe_patched
+          python3 adapters/godot/tests/respv_diagnose.py \
+            --probe build/respv_probe_patched --output build/respv-evidence/patched \
+            build/respv-loxfx/shaders/godot/loxfx_integration.spv \
+            build/respv-loxfx/shaders/godot/loxfx_follower_publish.spv \
+            build/respv-loop-optimized.spv \
+            build/respv-loop-unoptimized.spv
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          results = json.loads(
+              Path("build/respv-evidence/patched/findings.json").read_text()
+          )
+          failures = [entry["shader"] for entry in results
+                      if not entry["variants"]["default"].get("valid")]
+          if failures:
+              raise SystemExit("Patched optimizer still corrupts: " + ", ".join(failures))
+          print("PASS: all transformed shader modules validate")
+          PY
+          cmp build/respv-evidence/stock/loxfx_integration.default.spv \
+              build/respv-evidence/patched/loxfx_integration.default.spv
+          cmp build/respv-evidence/stock/respv-loop-unoptimized.default.spv \
+              build/respv-evidence/patched/respv-loop-unoptimized.default.spv
       - name: Preserve diagnostic output
         if: always()
         uses: actions/upload-artifact@v4
