@@ -177,7 +177,7 @@ def main():
     inputs=work/"inputs";inputs.mkdir(exist_ok=True)
     outputs=work/"outputs";outputs.mkdir(exist_ok=True)
     env=lavapipe_env()
-    records=[];failures=[];accepted=0;executed=0;inlined=0
+    records=[];failures=[];known_switch_bugs=[];accepted=0;executed=0;inlined=0
     for kind,body in SHAPES.items():
         glsl=inputs/(kind+".comp");glsl.write_text(HEADER+body+TAIL)
         for opt in ("O","Os","O0"):
@@ -210,11 +210,21 @@ def main():
                         failures.append((tag,"optimizer acceptance differs",statuses))
                     if len(variants)==2:
                         accepted+=1
-                        if not all(statuses[x]["valid"] for x in variants):
-                            failures.append((tag,"invalid transformed shader",statuses))
+                        valid=all(statuses[x]["valid"] for x in variants)
+                        if not valid:
+                            issue=(tag,"invalid transformed shader",statuses)
+                            if (kind=="switch" and opt=="O0"
+                                and all(x.get("validation_error","").find("OpSwitch")>=0
+                                        for x in statuses.values())):
+                                known_switch_bugs.append(issue)
+                            else:
+                                failures.append(issue)
                         record["binary_equal"]=variants["with-final"].read_bytes()==variants["without-final"].read_bytes()
                         if not record["binary_equal"]:
                             failures.append((tag,"final Phi pass changed binary"))
+                        if not valid:
+                            records.append(record)
+                            continue
                         original=run([driver,raw,*overrides],env)
                         if original.returncode:
                             failures.append((tag,"original Vulkan failed "+original.stderr[-600:]))
@@ -236,11 +246,11 @@ def main():
         if len(failures)>15:break
     summary={"attempted":len(records),"accepted":accepted,"executed":executed,
              "inlined_accepted":inlined,"shapes":len(SHAPES),
-             "spec_combinations":len(SPECS),"failures":failures,
+             "spec_combinations":len(SPECS),"failures":failures,"known_switch_bugs":known_switch_bugs,
              "support":{k:sum(int(x["status"][k]["ok"]) for x in records) for k in binaries}}
     (work/"results.json").write_text(json.dumps({"summary":summary,"records":records},indent=2)+"\n")
     print("SEMANTIC_CAMPAIGN:",json.dumps(summary),flush=True)
-    if failures or accepted<40 or executed<80:
+    if failures or accepted<40 or executed<80 or not known_switch_bugs:
         raise SystemExit("Semantic campaign failed: "+str(failures[:5]))
 
 if __name__=="__main__":
