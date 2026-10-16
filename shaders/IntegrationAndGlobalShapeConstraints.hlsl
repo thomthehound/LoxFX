@@ -83,7 +83,7 @@ void IntegrationAndGlobalShapeConstraints(
         float decay = exp(-params.damping * params.time_step * 60.0f);
         next.xyz = current.xyz + decay * (current.xyz - previous.xyz)
             + float3(0.0f, -params.gravity, 0.0f)
-                * (LOXFX_STEP_SECONDS * LOXFX_STEP_SECONDS);
+                * (params.time_step * params.time_step);
         if (params.global_stiffness > 0.0f &&
             (float)local_vertex <
                 params.global_range * (float)params.vertices_per_strand) {
