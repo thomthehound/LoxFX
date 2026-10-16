@@ -134,6 +134,25 @@ Interpretation: the local proof eliminated the bulk of the previously measured n
 
 **Outstanding validity/performance work:** verify that the structured merge/header shortcut is only applied when the SPIR-V dominance guarantee is valid (including unreachable regions, selection headers, continue constructs, loop nesting, multi-function modules, duplicate switch destinations, and specialization pruning). Run randomized or generated valid structured CFG cases against the exact dominance oracle, include heavy irregular non-structured joins to exercise fallback, record parse allocation overhead, and benchmark the *combined* candidate with Phi-cleanup gating and switch-selector repair. Avoid promoting multiple independent microbenchmark speedups to a summed runtime claim.
 
+## Integrated dominance + switch + Phi evidence (2026-10-16)
+
+[Passing combined semantic and performance campaign](https://github.com/thomthehound/LoxFX/actions/runs/38969093987) tested **12 families × 3 compile modes × optional O0 inlining × 4 specialization sets**: **192 configurations**. All **768 optimized outputs** from four variants (exact-reachability reference, structured dominance, structured plus schedule-gated Phi cleanup, structured with final Phi cleanup omitted) passed `spirv-val` and were byte-identical within each configuration. The **192 Vulkan executions** of the combined gated candidate matched each original shader. The independent explicit store/load dominance controls included nested selections, a structured loop and a switch with duplicate destination labels; the expanded Vulkan check had **6 original inputs × 7 corrected candidates = 42 matching executions**, and the known stock miscompile remained a failing negative control.
+
+The source variants all shared the research selector-liveness repair and legacy switch parser restriction removal. This isolates their differences to dominance and Phi scheduling, but means the experiment must **not** be used to claim the selector repair is universally proved, or that the original stock optimizer could handle the formerly failing cases.
+
+Five order-balanced timing trials for each optimizer and parse+optimize workload, median times in microseconds on the same shared CI runner:
+
+| Input | Exact reference parse+opt | Combined gated parse+opt | Change | Exact optimize-only | Combined optimize-only |
+|---|---:|---:|---:|---:|---:|
+| LoxFX integration | 18.4351 | 18.9220 | **+2.64% slower** | 4.1680 | 4.2919 |
+| LoxFX follower | 19.7071 | 19.9374 | **+1.17% slower** | 4.5484 | 4.5783 |
+| O0 switch | 12.3682 | 12.0073 | -2.92% faster | 3.0773 | 3.0269 |
+| Nested loop | 12.9522 | 12.7631 | -1.46% faster | 3.5854 | 3.4256 |
+| Phi flood 64 | 105.8830 | 94.1767 | -11.06% faster | 49.1936 | 35.3825 |
+| Phi flood 128 | 251.0780 | 203.8750 | -18.80% faster | 140.7690 | 91.0873 |
+
+**Decision:** Semantics are strong enough to progress to performance refinement; the combined candidate is **not performance-approved**, because real LoxFX inputs exhibited modest regressions against the equally corrected exact reference. The next experiment will compare against the original stock timing baseline and test a cheap Phi-count guard that avoids allocating scheduling metadata for sparse-Phi shaders. Do not add these percentage improvements to speedups from previous, differently controlled benchmarks.
+
 ## Unresolved questions and next experiments
 
 1. **Prove or falsify the modern Phi scheduling invariant.** Construct validated shaders with a predecessor terminator scheduled after a dependent `OpPhi`; exercise pruned switch edges, duplicate targets, nested selections, loops, backedges, continue/merge combinations, Phi chains, multi-function and inlining. Instrument final-pass mutations and compare generated CFG/operands with the actual predecessor sets. For valid cases, compare GPU results, not only `spirv-val`.
