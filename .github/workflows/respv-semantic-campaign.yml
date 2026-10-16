@@ -8,6 +8,7 @@ on:
       - 'adapters/godot/tests/respv_semantic_campaign.py'
       - 'adapters/godot/tests/respv_semantic_probe.cpp'
       - 'adapters/godot/tests/respv_vulkan_oracle.cpp'
+      - 'adapters/godot/tests/respv_switch_selector_audit.py'
   workflow_dispatch:
 
 permissions:
@@ -39,12 +40,22 @@ jobs:
             --optimizer adapters/godot/tests/respv_semantic_probe.cpp \
             --vulkan adapters/godot/tests/respv_vulkan_oracle.cpp \
             --work build/respv-semantic-evidence
+      - name: Experimentally lower fully reduced switches to unconditional branches
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_switch_selector_audit.py \
+            --upstream build/respv-semantic-upstream \
+            --input build/respv-semantic-evidence/inputs \
+            --probe adapters/godot/tests/respv_semantic_probe.cpp \
+            --driver build/respv-semantic-evidence/vulkan_oracle \
+            --work build/respv-semantic-evidence/switch-audit
       - name: Preserve semantic outcomes and shader reproducers
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: respv-vulkan-semantic-campaign
           path: |
+            build/respv-semantic-evidence/switch-audit/report.json
             build/respv-semantic-evidence/results.json
             build/respv-semantic-evidence/inputs/*.comp
             build/respv-semantic-evidence/inputs/*.spv
