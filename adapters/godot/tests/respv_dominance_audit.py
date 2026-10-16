@@ -434,11 +434,17 @@ def main():
     tools = compile_tools(upstream, a.probe.resolve(), a.bench.resolve(), work)
     records = evaluate(tools, paths + a.loxfx, work, a.iterations)
     by_name = {rec["source"]: rec for rec in records}
+    for rec in records:
+        filename = rec["source"]
+        exact = work / "outputs" / "exact_reachability" / filename
+        filtered = work / "outputs" / "filtered_exact" / filename
+        if exact.read_bytes() != filtered.read_bytes():
+            raise AssertionError(f"DFS negative filter lost a legal dominance case: {filename}")
     # Assertions describe observable semantics, not merely whether SPIR-V validates.
     for name in ("right_store.spv", "entry_store.spv"):
         record = by_name[name]
         if any(not record["outputs"][variant]["valid"] for variant in
-               ("baseline", "same_block_only", "exact_reachability", "precomputed_domtree")):
+               ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree")):
             raise AssertionError(f"Invalid SPIR-V in {name}: {record['outputs']}")
     right = by_name["right_store.spv"]
     entry = by_name["entry_store.spv"]
