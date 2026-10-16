@@ -153,6 +153,16 @@ Five order-balanced timing trials for each optimizer and parse+optimize workload
 
 **Decision:** Semantics are strong enough to progress to performance refinement; the combined candidate is **not performance-approved**, because real LoxFX inputs exhibited modest regressions against the equally corrected exact reference. The next experiment will compare against the original stock timing baseline and test a cheap Phi-count guard that avoids allocating scheduling metadata for sparse-Phi shaders. Do not add these percentage improvements to speedups from previous, differently controlled benchmarks.
 
+## Pending research controls: sparse Phi gating and obsolete selector search (2026-10-16)
+
+Following the fully validated 192-configuration combined campaign, the next A/B experiments have been added to draft PR #31:
+
+- **Sparse-Phi scheduling fast path.** A configurable small-Phi cutoff skips the parse-time instruction-position vector and conservatively keeps the historical final Phi pass for those shaders; larger Phi-heavy shaders still receive the scheduling gate. The initial threshold of eight is only an experiment, not a selected production constant.
+- **Selector parser cleanup.** Once the switch reducer retains its original selector rather than borrowing an unrelated integer constant, the parser's scan for a candidate `OpConstant` should be dead work. A source-only variant removes the scan while preserving selector behavior, then verifies semantic output and separately benchmarks parse+optimize.
+- **Stock baseline restored.** The combined campaign's new benchmark also times stock upstream (with the established loop fix). This permits true end-to-end performance comparison; correctness tests still use the exact-reachability-and-fixed-selector reference because stock is knowingly wrong for the right-store case and invalid for six O0 switch configurations.
+
+These candidates are not approved or credited with performance gains until fresh CI completes. Do not confuse a passing prior 192-case campaign with proof for these new variants. Preserve measured raw timings and CI links once known.
+
 ## Unresolved questions and next experiments
 
 1. **Prove or falsify the modern Phi scheduling invariant.** Construct validated shaders with a predecessor terminator scheduled after a dependent `OpPhi`; exercise pruned switch edges, duplicate targets, nested selections, loops, backedges, continue/merge combinations, Phi chains, multi-function and inlining. Instrument final-pass mutations and compare generated CFG/operands with the actual predecessor sets. For valid cases, compare GPU results, not only `spirv-val`.
