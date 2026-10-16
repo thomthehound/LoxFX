@@ -326,6 +326,73 @@ def make_nested_phi_prune(outdir, chain_length, folded_condition_true):
     return spv
 
 
+
+def make_outer_merge_prune(outdir, chain_depth, fold_true):
+    """Try a legal structured branch that exits an inner construct early.
+
+    Keep the outer merge reachable via independent C while the B->outer
+    direct edge is folded off. Reject the fixture if spirv-val disallows
+    this structured construct.
+    """
+    name = f"outer_merge_prune_{chain_depth}_{int(fold_true)}"
+    lines = [
+        "OpCapability Shader", "OpMemoryModel Logical GLSL450",
+        'OpEntryPoint GLCompute %main "main" %out %gid',
+        "OpExecutionMode %main LocalSize 1 1 1",
+        "OpDecorate %out DescriptorSet 0", "OpDecorate %out Binding 0",
+        "OpDecorate %Out Block", "OpMemberDecorate %Out 0 Offset 0",
+        "OpDecorate %gid BuiltIn GlobalInvocationId",
+        "%void = OpTypeVoid", "%func = OpTypeFunction %void",
+        "%bool = OpTypeBool", "%int = OpTypeInt 32 1",
+        "%uint = OpTypeInt 32 0", "%float = OpTypeFloat 32",
+        "%uvec3 = OpTypeVector %uint 3",
+        "%ptrInput = OpTypePointer Input %uvec3",
+        "%Out = OpTypeStruct %float",
+        "%ptrOut = OpTypePointer StorageBuffer %Out",
+        "%ptrFloat = OpTypePointer StorageBuffer %float",
+        "%gid = OpVariable %ptrInput Input",
+        "%out = OpVariable %ptrOut StorageBuffer",
+        "%zero = OpConstant %int 0", "%one = OpConstant %int 1",
+        "%uzero = OpConstant %uint 0",
+        "%fone = OpConstant %float 1.0", "%ftwo = OpConstant %float 2.0",
+        "%main = OpFunction %void None %func",
+        "%entry = OpLabel",
+        "%g = OpLoad %uvec3 %gid", "%x = OpCompositeExtract %uint %g 0",
+        "%dynamic = OpIEqual %bool %x %uzero",
+        "OpSelectionMerge %outer None",
+        "OpBranchConditional %dynamic %B %C",
+        "%B = OpLabel",
+    ]
+    prev = "%one"
+    for k in range(chain_depth):
+        new = f"%d{k}"
+        lines.append(f"{new} = OpIAdd %int {prev} %one")
+        prev = new
+    lines += [
+        f"%fold = OpI{'NotEqual' if fold_true else 'Equal'} %bool {prev} %zero",
+        "OpSelectionMerge %exit None",
+        "OpBranchConditional %fold %outer %exit",
+        "%exit = OpLabel", "OpReturn",
+        "%C = OpLabel", "OpBranch %outer",
+        "%outer = OpLabel",
+        "%phi = OpPhi %float %fone %B %ftwo %C",
+        "%ptr = OpAccessChain %ptrFloat %out %zero",
+        "OpStore %ptr %phi", "OpReturn", "OpFunctionEnd",
+    ]
+    asm = outdir / (name + ".spvasm")
+    spv = outdir / (name + ".spv")
+    asm.write_text("\n".join(lines) + "\n")
+    result = exec_cmd("spirv-as", "--target-env", "vulkan1.2", asm, "-o", spv)
+    if result.returncode:
+        print("OUTER_ASM_FAIL:", name, result.stderr[:600], flush=True)
+        return None
+    valid = exec_cmd("spirv-val", "--target-env", "vulkan1.2", spv)
+    if valid.returncode:
+        print("OUTER_VALIDATION_FAIL:", name, valid.stderr[:700], flush=True)
+        return None
+    return spv
+
+
 def inspect(path):
     result = exec_cmd("spirv-val", "--target-env", "vulkan1.2", path)
     if result.returncode:
@@ -363,6 +430,11 @@ def main():
     for depth in (0, 2, 16, 64, 128):
         for truth in (False, True):
             case = make_nested_phi_prune(work / "shaders", depth, truth)
+            if case is not None:
+                inputs.append(case)
+    for depth in (0, 8, 64, 128):
+        for truth in (False, True):
+            case = make_outer_merge_prune(work / "shaders", depth, truth)
             if case is not None:
                 inputs.append(case)
     inputs.extend(a.loxfx)
