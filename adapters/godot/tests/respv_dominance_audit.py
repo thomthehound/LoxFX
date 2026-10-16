@@ -169,6 +169,19 @@ def compile_tools(upstream, probe, bench, work):
 
 """
     variants["exact_reachability"] = code[:start] + reachability + code[end:]
+    filter_anchor = "        const uint32_t storeIndex = uint32_t(&store - shader.instructions.data());"
+    if reachability.count(filter_anchor) != 1:
+        raise RuntimeError("Expected one reachability check insertion point")
+    filtered = reachability.replace(filter_anchor, """        // Cheap DFS-ancestry rejection: necessary but not sufficient for dominance.
+        const uint32_t aPre = shader.blockPreOrderIndices[store.blockIndex];
+        const uint32_t bPre = shader.blockPreOrderIndices[load.blockIndex];
+        const uint32_t aPost = shader.blockPostOrderIndices[store.blockIndex];
+        const uint32_t bPost = shader.blockPostOrderIndices[load.blockIndex];
+        if (!(aPre < bPre && aPost > bPost)) {
+            return false;
+        }
+""" + filter_anchor)
+    variants["filtered_exact"] = code[:start] + filtered + code[end:]
 
     # Correct, reusable dominance metadata: derive CFG edges from *actual*
     # branch terminators, then construct each function's dominator tree.
@@ -371,7 +384,7 @@ def evaluate(probes, shaders, work, iterations):
     for shader in shaders:
         entry = {"source": shader.name, "outputs": {}, "times_us": {}, "parse_run_us": {}}
         original_text = disasm(shader)
-        for name in ("baseline", "same_block_only", "exact_reachability", "precomputed_domtree"):
+        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree"):
             target = work / "outputs" / name / shader.name
             target.parent.mkdir(parents=True, exist_ok=True)
             p = run(probes[(name, "probe")], shader, target)
