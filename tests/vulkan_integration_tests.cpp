@@ -695,6 +695,44 @@ int main(int argc,char** argv) {
             }
         }
 
+        // Full source-ordered simulation of two grooms recorded into ONE
+        // independent host-owned command buffer/queue submission.
+        // Unlike diagnostic_read_positions, record_frame must never wait
+        // or submit on behalf of the host.
+        auto host_a_source=loxfx::prepare_groom(fixture(0.0f,1),
+            {.followers_per_guide=1});
+        auto host_b_source=loxfx::prepare_groom(fixture(5.0f,2),
+            {.followers_per_guide=2});
+        check(host_a_source && host_b_source,"prepare frame recording grooms");
+        auto host_a=context.prepare(*host_a_source);
+        auto host_b=context.prepare(*host_b_source);
+        auto external_frame=context.borrowed_handles();
+        HostBatch frame_batch(external_frame.logical);
+        frame_batch.init(external_frame.queue_family);
+        frame_batch.begin();
+        const auto before_recording=context.gpu_submission_count();
+        loxfx::NativeFrameParameters frame_a{};
+        frame_a.integration.gravity=0.0f;
+        frame_a.integration.root_translation_x=0.25f;
+        frame_a.length_wind.length_iterations=2;
+        loxfx::NativeFrameParameters frame_b=frame_a;
+        frame_b.integration.root_translation_x=-0.40f;
+        context.record_frame(frame_batch.commands,host_a,frame_a);
+        context.record_frame(frame_batch.commands,host_b,frame_b);
+        check(context.gpu_submission_count()==before_recording,
+              "complete native Vulkan frame recorder performed hidden submission");
+        frame_batch.submit(external_frame.compute_queue);
+        check(context.gpu_submission_count()==before_recording,
+              "host-owned full-frame Vulkan queue was counted as diagnostic submission");
+        auto frame_a_positions=context.diagnostic_read_positions(host_a);
+        auto frame_b_positions=context.diagnostic_read_positions(host_b);
+        check(std::abs(frame_a_positions[0].x-0.25f)<0.001f &&
+              std::abs(frame_b_positions[0].x+0.40f)<0.001f,
+              "host-queued full native frame did not move independent roots");
+        check(std::abs(frame_a_positions[5].x-0.25f)<0.001f &&
+              std::abs(frame_b_positions[5].x+0.40f)<0.001f,
+              "host-queued full native frame did not publish followers");
+
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared
