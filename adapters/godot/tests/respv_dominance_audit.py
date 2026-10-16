@@ -7,6 +7,7 @@ Independent research tools: do not modify production LoxFX or Godot code.
 import argparse
 import difflib
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -518,6 +519,68 @@ def compile_tools(upstream, probe, bench, work):
         raise RuntimeError("Unable to locate dominance test")
     precompute = precompute.replace(old, new)
     variants["precomputed_domtree"] = precompute
+    # Adaptive alternative: a few distinct store blocks use the existing
+    # cached exact reachability; subsequent distinct blocks trigger one lazy
+    # dominator-tree build for the rest of the optimizer run.
+    lazy_helper = dom_function.replace(
+        "    bool Shader::buildDominatorTree(const void *pData, size_t pSize) {",
+        "    static bool optimizerBuildLazyDominatorTree(OptimizerContext &ctx) {"
+    ).replace(
+        """        (void)pSize;
+        const uint32_t *words = reinterpret_cast<const uint32_t *>(pData);""",
+        """        const Shader &shader = ctx.shader;
+        const uint32_t *words = shader.inlinedSpirvWords.empty()
+            ? shader.extSpirvWords : shader.inlinedSpirvWords.data();"""
+    )
+    lazy_helper = lazy_helper.replace("blockDomPreOrderIndices", "ctx.domPre")
+    lazy_helper = lazy_helper.replace("blockDomPostOrderIndices", "ctx.domPost")
+    for field in ("blocks", "instructions", "results", "functions"):
+        lazy_helper = re.sub(r"(?<![.\\w])" + field + r"\\b", "shader." + field, lazy_helper)
+    if ("bool Shader::buildDominatorTree" in lazy_helper or
+            "ctx.domPre.assign" not in lazy_helper):
+        raise RuntimeError("Lazy dominator source transformation incomplete")
+    adaptive = cached
+    cached_lookup = """        const auto found = ctx.reachabilityWithoutStore.find(store.blockIndex);
+        if (found != ctx.reachabilityWithoutStore.end()) {
+            return !found->second[load.blockIndex];
+        }"""
+    lazy_lookup = """        // Fast repeated-store path does not construct CFG metadata.
+        if (ctx.lazyDomReady) {
+            const uint32_t a = store.blockIndex, b = load.blockIndex;
+            return ctx.domPre[a] != UINT32_MAX && ctx.domPre[b] != UINT32_MAX &&
+                   ctx.domPre[a] < ctx.domPre[b] && ctx.domPost[a] > ctx.domPost[b];
+        }
+        const auto found = ctx.reachabilityWithoutStore.find(store.blockIndex);
+        if (found != ctx.reachabilityWithoutStore.end()) {
+            return !found->second[load.blockIndex];
+        }
+        // Avoid quadratic work/memory when a shader has many distinct stores.
+        // The threshold is experimental and must be justified by timings.
+        if (ctx.reachabilityWithoutStore.size() >= 4) {
+            if (!optimizerBuildLazyDominatorTree(ctx)) {
+                return false;  // Never forward without a trustworthy proof.
+            }
+            ctx.lazyDomReady = true;
+            ctx.reachabilityWithoutStore.clear();
+            const uint32_t a = store.blockIndex, b = load.blockIndex;
+            return ctx.domPre[a] != UINT32_MAX && ctx.domPre[b] != UINT32_MAX &&
+                   ctx.domPre[a] < ctx.domPre[b] && ctx.domPost[a] > ctx.domPost[b];
+        }"""
+    if adaptive.count(cached_lookup) != 1:
+        raise RuntimeError("Cached reachability anchor changed")
+    adaptive = adaptive.replace(cached_lookup, lazy_lookup)
+    fields = """        std::unordered_map<uint32_t, std::vector<uint8_t>> reachabilityWithoutStore;
+        std::vector<uint32_t> domPre, domPost;
+        bool lazyDomReady = false;
+"""
+    lazy_code = code[:start] + lazy_helper + adaptive + code[end:]
+    lazy_code = lazy_code.replace(context_marker, "        Options options;\\n" + fields + "    };\\n")
+    if lazy_code.count(call) != 1:
+        raise RuntimeError("Cannot find adaptive dominance call site")
+    lazy_code = lazy_code.replace(
+        call, "optimizerDoesInstructionDominate(rContext, storeInstruction, loadInstruction)"
+    )
+    variants["adaptive_domtree"] = lazy_code
     tools = {}
     for name, cpp in variants.items():
         folder = work / "variants" / name
@@ -545,7 +608,7 @@ def evaluate(probes, shaders, work, iterations):
     for shader in shaders:
         entry = {"source": shader.name, "outputs": {}, "times_us": {}, "parse_run_us": {}}
         original_text = disasm(shader)
-        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "cached_without_final_phi", "baseline_without_final_phi", "precomputed_domtree"):
+        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "cached_without_final_phi", "baseline_without_final_phi", "precomputed_domtree", "adaptive_domtree"):
             target = work / "outputs" / name / shader.name
             target.parent.mkdir(parents=True, exist_ok=True)
             p = run(probes[(name, "probe")], shader, target)
@@ -614,13 +677,14 @@ def main():
         exact = work / "outputs" / "exact_reachability" / filename
         filtered = work / "outputs" / "filtered_exact" / filename
         cached = work / "outputs" / "cached_filtered_exact" / filename
-        if exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes():
+        adaptive = work / "outputs" / "adaptive_domtree" / filename
+        if (exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes() or exact.read_bytes() != adaptive.read_bytes():
             raise AssertionError(f"Filtered/cached dominance diverged from oracle: {filename}")
     # Assertions describe observable semantics, not merely whether SPIR-V validates.
     for name in ("right_store.spv", "entry_store.spv"):
         record = by_name[name]
         if any(not record["outputs"][variant]["valid"] for variant in
-               ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree")):
+               ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree", "adaptive_domtree")):
             raise AssertionError(f"Invalid SPIR-V in {name}: {record['outputs']}")
     right = by_name["right_store.spv"]
     entry = by_name["entry_store.spv"]
