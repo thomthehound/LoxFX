@@ -1,0 +1,98 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: Godot renderer-owned GPU proof
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  forward-plus-vulkan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install renderer and SPIR-V diagnostic tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers xvfb xauth \
+            libgl1-mesa-dri vulkan-validationlayers spirv-tools
+      - name: Install official DXC
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dxc"
+          curl --fail --location --retry 3 \
+            https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP/dxc"
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/dxc/lib" >> "$GITHUB_ENV"
+      - name: Compile same-source Godot-compatible LoxFX SPIR-V without godot-cpp
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/renderer-proof \
+            -DLOXFX_BUILD_GODOT_RENDERER_PROOF=ON \
+            -DLOXFX_BUILD_TOOLS=OFF -DBUILD_TESTING=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/renderer-proof \
+            --target loxfx_godot_renderer_shaders --parallel 2
+      - name: Validate shader module and entrypoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          for shader in build/renderer-proof/shaders/godot/*.spv; do
+            echo "--- $(basename "$shader")"
+            spirv-val --target-env vulkan1.2 "$shader"
+            spirv-dis "$shader" | grep -E \
+              'OpEntryPoint|OpExecutionMode|OpDecorate .* (Binding|DescriptorSet)' | head -60
+            test "$(spirv-dis "$shader" | grep -c 'OpEntryPoint GLCompute .* "main"')" -eq 1
+          done
+      - name: Download Godot 4.7.2 for live renderer-owned execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/godot-engine
+          curl --fail --location --retry 3 -o build/godot-engine/godot.zip \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -q build/godot-engine/godot.zip -d build/godot-engine
+          engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
+          test -n "$engine"
+          chmod +x "$engine"
+      - name: Execute renderer-owned LoxFX shader stages on Lavapipe
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
+          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          proof=build/godot-renderer-proof
+          mkdir -p "$proof/shaders"
+          cp adapters/godot/tests/renderer_owned_compute.gd "$proof/"
+          cp build/renderer-proof/shaders/godot/*.spv "$proof/shaders/"
+          printf 'config_version=5\n\n[application]\nconfig/name="LoxFX Renderer Owned Compute"\n\n[rendering]\nrenderer/rendering_method="forward_plus"\n' > "$proof/project.godot"
+          engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
+          test -n "$engine"
+          # The ONLY passing gate is the normal production renderer.
+          # Debug mode is a diagnostic control and MUST NOT be accepted in
+          # place of the normal Godot rendering pipeline.
+          if timeout 90s xvfb-run -a "$engine" --path "$proof" \
+              --rendering-driver vulkan --rendering-method forward_plus \
+              --audio-driver Dummy --script res://renderer_owned_compute.gd; then
+            echo "PASS: normal Godot renderer-owned LoxFX compute"
+          else
+            echo "::error::Normal renderer failed LoxFX integration module"
+            echo "Diagnosing the internal Godot re-SPIRV optimization:"
+            if timeout 90s xvfb-run -a "$engine" --path "$proof" \
+                --generate-spirv-debug-info \
+                --rendering-driver vulkan --rendering-method forward_plus \
+                --audio-driver Dummy --script res://renderer_owned_compute.gd; then
+              echo "::notice::Debug-mode control passed; normal renderer still fails"
+            else
+              echo "::warning::Both normal and debug-mode controls failed"
+            fi
+            exit 1
+          fi
