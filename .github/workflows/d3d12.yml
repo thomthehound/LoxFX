@@ -41,6 +41,9 @@ jobs:
         run: |
           cmake --install build/d3d12 --config Release --prefix "$env:RUNNER_TEMP/loxfx-installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path "$env:RUNNER_TEMP/loxfx-installed/include/loxfx/native_frame_parameters.h") {
+            throw "Experimental frame recorder leaked into Core SDK headers"
+          }
           if (Test-Path "$env:RUNNER_TEMP/loxfx-installed/include/loxfx/d3d12") {
             throw "Experimental D3D12 header leaked into public SDK"
           }
