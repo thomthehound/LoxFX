@@ -38,7 +38,8 @@ loxfx::GroomAsset fixture(float base, std::uint32_t guides) {
 void submit_host_commands(gpu::DeviceContext& context,
                           const gpu::GroomState& groom,
                           const gpu::GroomState* second = nullptr,
-                          bool compare_clock = false) {
+                          bool compare_clock = false,
+                          const gpu::GroomState* quiet = nullptr) {
     const auto external=context.borrowed_handles();
     ComPtr<ID3D12CommandAllocator> allocator;
     hrcheck(external.device->CreateCommandAllocator(
@@ -52,7 +53,8 @@ void submit_host_commands(gpu::DeviceContext& context,
     const auto submissions=context.diagnostic_submission_count();
     constexpr float dt=1.0f/60.0f;
     if (compare_clock) {
-        require(second!=nullptr,"manual clock comparison needs two grooms");
+        require(second!=nullptr && quiet!=nullptr,
+                "wind clock comparison needs composite/manual/control grooms");
         // Record a full composite frame and the equivalent explicit stages
         // at 30 Hz WITH wind, into the same host-owned command list.
         loxfx::NativeFrameParameters clock{};
@@ -76,6 +78,9 @@ void submit_host_commands(gpu::DeviceContext& context,
         context.record_local_shape(commands.Get(),*second,clock.local_shape_stiffness);
         context.record_length_wind(commands.Get(),*second,wind);
         context.record_followers(commands.Get(),*second);
+        auto calm=clock;
+        calm.winds={};
+        context.record_frame(commands.Get(),*quiet,calm);
     } else if (second) {
         // Both six-stage frames are recorded into ONE host-owned list.
         loxfx::NativeFrameParameters a{};
@@ -765,9 +770,11 @@ int main(int argc,char** argv) {
         require(clock_prep.has_value(),"prepare D3D12 wind clock fixture");
         auto composite=context.prepare_diagnostic(*clock_prep);
         auto manual=context.prepare_diagnostic(*clock_prep);
-        submit_host_commands(context,composite,&manual,true);
+        auto quiet=context.prepare_diagnostic(*clock_prep);
+        submit_host_commands(context,composite,&manual,true,&quiet);
         const auto composite_positions=context.diagnostic_read_positions(composite);
         const auto manual_positions=context.diagnostic_read_positions(manual);
+        const auto calm_positions=context.diagnostic_read_positions(quiet);
         require(composite_positions.size()==manual_positions.size(),
                 "D3D12 full-frame and manual strand counts differ");
         for(std::size_t i=0;i<composite_positions.size();++i) {
@@ -778,8 +785,10 @@ int main(int argc,char** argv) {
                     std::abs(a.z-b.z)<0.0003f,
                     "D3D12 full-frame wind uses a different simulation clock");
         }
-        require(std::abs(manual_positions[2].x-clock_prep->rest_positions[2].x)>0.001f,
-                "D3D12 wind regression did not exercise affected vertices");
+        // Compare against identical root/constraint motion without wind.
+        // Translation alone would otherwise make this test vacuously pass.
+        require(std::abs(manual_positions[2].x-calm_positions[2].x)>0.001f,
+                "D3D12 wind clock regression did not produce measurable wind motion");
 
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
