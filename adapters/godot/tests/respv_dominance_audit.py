@@ -539,12 +539,44 @@ def compile_tools(upstream, probe, bench, work):
     if ("bool Shader::buildDominatorTree" in lazy_helper or
             "ctx.domPre.assign" not in lazy_helper):
         raise RuntimeError("Lazy dominator source transformation incomplete")
+    # In a rooted CFG forest with at most one predecessor per block,
+    # DFS ancestry *is* dominance: there is only one entry-to-block path.
+    # This is a sufficient proof, not a guess about arbitrary CFG topology.
+    forest_helper = """    static bool optimizerControlFlowIsForest(const Shader &shader) {
+        const uint32_t *words = shader.inlinedSpirvWords.empty()
+            ? shader.extSpirvWords : shader.inlinedSpirvWords.data();
+        std::vector<uint8_t> indegree(shader.blocks.size(), 0);
+        for (uint32_t b = 0; b < uint32_t(shader.blocks.size()); ++b) {
+            const uint32_t term = shader.blocks[b].terminatorInstructionIndex;
+            const uint32_t index = shader.instructions[term].wordIndex;
+            const SpvOp op = SpvOp(words[index] & 0xFFFFU);
+            const uint32_t count = words[index] >> 16U;
+            uint32_t start, labels, stride;
+            if (!SpvHasLabels(op, start, labels, stride, false)) continue;
+            for (uint32_t k = 0; k < labels && start + k*stride < count; ++k) {
+                const uint32_t label = words[index + start + k*stride];
+                const uint32_t labelIndex = shader.results[label].instructionIndex;
+                const uint32_t target = shader.instructions[labelIndex].blockIndex;
+                if (target >= indegree.size() || ++indegree[target] > 1) return false;
+            }
+        }
+        return true;
+    }
+
+"""
     adaptive = cached
     cached_lookup = """        const auto found = ctx.reachabilityWithoutStore.find(store.blockIndex);
         if (found != ctx.reachabilityWithoutStore.end()) {
             return !found->second[load.blockIndex];
         }"""
-    lazy_lookup = """        // Fast repeated-store path does not construct CFG metadata.
+    lazy_lookup = """        // On single-predecessor CFG forests, the existing DFS filter is
+        // already a complete proof of dominance; avoid allocating a domtree.
+        if (!ctx.forestChecked) {
+            ctx.cfgIsForest = optimizerControlFlowIsForest(shader);
+            ctx.forestChecked = true;
+        }
+        if (ctx.cfgIsForest) return true;
+        // Fast repeated-store path does not construct CFG metadata.
         if (ctx.lazyDomReady) {
             const uint32_t a = store.blockIndex, b = load.blockIndex;
             return ctx.domPre[a] != UINT32_MAX && ctx.domPre[b] != UINT32_MAX &&
@@ -572,8 +604,9 @@ def compile_tools(upstream, probe, bench, work):
     fields = """        std::unordered_map<uint32_t, std::vector<uint8_t>> reachabilityWithoutStore;
         std::vector<uint32_t> domPre, domPost;
         bool lazyDomReady = false;
+        bool forestChecked = false, cfgIsForest = false;
 """
-    lazy_code = code[:start] + lazy_helper + adaptive + code[end:]
+    lazy_code = code[:start] + lazy_helper + forest_helper + adaptive + code[end:]
     lazy_code = lazy_code.replace(context_marker, "        Options options;\n" + fields + "    };\n")
     if lazy_code.count(call) != 1:
         raise RuntimeError("Cannot find adaptive dominance call site")
