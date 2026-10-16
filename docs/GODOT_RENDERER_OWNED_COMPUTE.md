@@ -30,8 +30,47 @@ The Godot runtime test consumes only the `main` variants; native Vulkan
 CI continues testing the standard artifacts. No shader-physics fork or
 byte-patching of SPIR-V is necessary.
 
-The Godot-stage compile and numerical-readback gate must pass before we
-call the renderer-owned experiment functional.
+### Additional compatibility blocker verified in executable CI
+
+After compiling a separate Godot-targeted `main` entry point, the *follower*
+compute pipeline creates successfully. The *integration* compute pipeline
+still fails in the normal Godot 4.7.2 Forward+ renderer, reporting
+`VkResult -13`. Vulkan validation identifies the real error as
+`VUID-VkShaderModuleCreateInfo-pCode-08737`: a forward-referenced SPIR-V
+ID (`%123`) has no definition, followed by Mesa's
+`spirv_to_nir failed (VK_ERROR_UNKNOWN)`.
+
+**The supplied shader passes `spirv-val --target-env vulkan1.2`.**
+Native LoxFX Vulkan executes its original entry-point variant successfully.
+Godot's Vulkan implementation calls `respv::Optimizer::run` on imported
+SPIR-V when shader debugging is disabled. Running the *same* Godot renderer
+with `--generate-spirv-debug-info`, which disables this intermediate
+optimization, **passes the original LoxFX integration and tangent numerical
+acceptance** with a global Godot-owned device and the expected producer/
+consumer dependency. This is a source-backed engine-internal transformation
+failure, not evidence of an invalid LoxFX shader or a D3D12 problem.
+
+We also tested DXC `-O0`, SPIRV-Tools optimization and HLSL legalization,
+a DXC-SPIRV → SPIRV-Cross GLSL → glslang round-trip, an optional
+specialization constant, and a mathematically equivalent predicated
+control-flow variant. None survived the normal Godot re-SPIRV transform;
+all experiments that introduced source variations were **reverted**. No
+specialization/branchless shader fork or silent debug flag was added.
+
+The renderer-owned proof now lives in its own **fast CI workflow**,
+`.github/workflows/godot-renderer-proof.yml`, separate from the expensive
+GDExtension build. It has a strict normal-mode gate. If the normal run
+fails, a debug-mode run is retained **only as a diagnostic control**;
+it cannot turn the check green.
+
+**Current status: PR #28 remains draft and this proof is blocked under
+stock Godot 4.7.2.** Correct remediation requires fixing or safely bypassing
+the re-SPIRV transformation in a supported Godot renderer integration
+surface, not inventing a device, altering the reference hair dynamics,
+requiring a global debug mode, or marking the test passed.
+
+The Godot-stage compile and numerical-readback gate must pass in normal
+mode before we call the renderer-owned experiment functional.
 
 The GPU producer is LoxFX's **unmodified**
 `IntegrationAndGlobalShapeConstraints.hlsl`, compiled by our existing
