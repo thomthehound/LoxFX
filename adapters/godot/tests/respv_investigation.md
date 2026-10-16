@@ -114,7 +114,25 @@ A new stress workload places each variable's sole store in a **different** CFG b
 | 32 distinct store blocks | 3.4978 | 7.9426 | 8.7231 | 4.0639 | 10.7569 | 15.9452 | 13.1300 |
 | 128 distinct store blocks | 12.5161 | 69.9800 | 74.6080 | 12.7200 | 40.2700 | 102.3700 | 51.2872 |
 
-The cached-per-store approach has quadratic worst-case scaling and is **not generally performance-acceptable**, even though it works well when many loads share one store. Unconditional dominator preprocessing avoids that optimizer blowup but adds significant parsing overhead. A separate **adaptive, lazy dominator-tree** research variant has been added to the draft CI, switching from cached reachability to a reusable dominator tree after several distinct store-block queries; **its correctness and performance evidence are pending**. Do not ship the fixed threshold or claim the adaptive approach succeeds until both evidence types pass.
+The cached-per-store approach has quadratic worst-case scaling and is **not generally performance-acceptable**, even though it works well when many loads share one store. Unconditional dominator preprocessing avoids that optimizer blowup but adds significant parsing overhead. Subsequent adaptive forest, lazy domtree, lazy bitset, and structured-merge-corridor alternatives have been benchmarked; the latest structured-corridor results are recorded below. The first cache-only approach remains rejected on worst-case cost.
+
+## Adaptive dominance findings through structured-merge experiment (2026-10-16)
+
+Several source-only alternatives were compared on controlled CI fixtures, with validated outputs compared byte-for-byte to exact reachability and the known conditional-store semantic counterexample executed on Vulkan. These optimizers are **research variants**, not production updates.
+
+[Structured-corridor CI](https://github.com/thomthehound/LoxFX/actions/runs/38965300887) adds a sufficient local dominance proof: trace backwards from the load along blocks with uniquely determined predecessors; where the traversal meets a reachable SPIR-V structured merge, continue at the selection/loop header that dominates that merge. A query the local proof cannot establish falls back to exact lazy bitset dominance. The earlier forest fast path remains available.
+
+| 128 distinct stores | Stock optimize (µs) | Bitset optimize (µs) | Structured-corridor optimize (µs) | Stock parse+opt (µs) | Structured parse+opt (µs) |
+|---|---:|---:|---:|---:|---:|
+| Linear | 26.2803 | 26.3366 | **25.5184** | 76.7820 | 77.3778 |
+| One join | 25.4042 | 43.3880 | **27.1736** | 76.2471 | 78.0346 |
+| Two joins | 26.0748 | 43.5756 | **26.8482** | 77.2705 | 78.9822 |
+
+The structured variant validates, produces output identical to the exact reachability oracle across the audit corpus, and passes Vulkan regression tests. In the small original store-counterexample it preserves the correct **7,11,...** lane pattern instead of the stock optimizer's incorrect **11,11,...** result. The latest audit reported 21 corrected Vulkan matches across the three fixture families.
+
+Interpretation: the local proof eliminated the bulk of the previously measured nonforest performance penalty, without unconditional dominator preprocessing. Differences of ~1–3% on a shared CI runner are not reliable application-wide latency claims; repeat on an isolated runner and a broader shader corpus. The existing stock baseline remains semantically incorrect on some CFGs, so speed alone is not an acceptance metric.
+
+**Outstanding validity/performance work:** verify that the structured merge/header shortcut is only applied when the SPIR-V dominance guarantee is valid (including unreachable regions, selection headers, continue constructs, loop nesting, multi-function modules, duplicate switch destinations, and specialization pruning). Run randomized or generated valid structured CFG cases against the exact dominance oracle, include heavy irregular non-structured joins to exercise fallback, record parse allocation overhead, and benchmark the *combined* candidate with Phi-cleanup gating and switch-selector repair. Avoid promoting multiple independent microbenchmark speedups to a summed runtime claim.
 
 ## Unresolved questions and next experiments
 
