@@ -775,11 +775,12 @@ void DeviceContext::record_frame(ID3D12GraphicsCommandList* cmd,
                                  const NativeFrameParameters& p) const {
     // Use existing per-stage D3D12 UAV hazards and resource bindings.
     // Never close or submit a host's command list here.
-    record_integration(cmd, state, p.integration, p.integration_steps);
+    const auto stages=native_frame_stage_parameters(p);
+    record_integration(cmd, state, stages.integration, p.integration_steps);
     record_strand_level(cmd, state, p.strand_motion);
     record_velocity_shock(cmd, state);
     record_local_shape(cmd, state, p.local_shape_stiffness);
-    record_length_wind(cmd, state, p.length_wind);
+    record_length_wind(cmd, state, stages.length_wind);
     record_followers(cmd, state);
 }
 
