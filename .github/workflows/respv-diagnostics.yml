@@ -56,7 +56,9 @@ jobs:
           glslc --target-env=vulkan1.2 -fshader-stage=compute -O \
             adapters/godot/tests/respv_loop.comp -o build/respv-loop-optimized.spv
           glslc --target-env=vulkan1.2 -fshader-stage=compute -O0 \
-            adapters/godot/tests/respv_loop.comp -o build/respv-loop-unoptimized.spv
+            adapters/godot/tests/respv_loop.comp -o build/respv-loop-unoptimized-raw.spv
+          spirv-opt --strip-debug build/respv-loop-unoptimized-raw.spv \
+            -o build/respv-loop-unoptimized.spv
       - name: Isolate transformation validity and dead-code-elimination effects
         run: |
           set -euo pipefail
