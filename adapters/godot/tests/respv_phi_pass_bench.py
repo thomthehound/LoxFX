@@ -59,14 +59,14 @@ def compile_bench(upstream, source, benchmark, dest):
 
 def check_equivalent(work, shader):
     outputs = []
-    for name in ("baseline", "no-final-phi"):
+    for name in ("baseline", "no-final-phi", "ordered-phi", "ordered-no-final"):
         file = work / "pass-cost" / "outputs" / name / shader.name
         file.parent.mkdir(parents=True, exist_ok=True)
         run(work / "bin" / name, shader, file)
         run("spirv-val", "--target-env", "vulkan1.2", file)
         outputs.append(file.read_bytes())
-    if outputs[0] != outputs[1]:
-        raise RuntimeError("Removing final Phi pass altered output: " + shader.name)
+    if any(blob != outputs[0] for blob in outputs[1:]):
+        raise RuntimeError("Phi pass or scheduling variant altered output: " + shader.name)
 
 
 def sample(bench, shader, count=550, include_parse=False):
@@ -88,7 +88,7 @@ def main():
     upstream = opts.upstream.resolve()
     work = opts.work.resolve()
     binaries = {}
-    for name in ("baseline", "no-final-phi"):
+    for name in ("baseline", "no-final-phi", "ordered-phi", "ordered-no-final"):
         dest = work / "pass-cost" / "bin" / name
         compile_bench(upstream, work / "sources" / name / "re-spirv.cpp",
                       opts.benchmark.resolve(), dest)
@@ -105,7 +105,7 @@ def main():
         trials = []
         for trial in range(5):
             # Swap order to lessen effects of noisy shared CI runners.
-            modes = ("baseline", "no-final-phi") if trial % 2 == 0 else ("no-final-phi", "baseline")
+            modes = ("baseline", "no-final-phi", "ordered-phi", "ordered-no-final") if trial % 2 == 0 else ("ordered-no-final", "ordered-phi", "no-final-phi", "baseline")
             result = {}
             for mode in modes:
                 result[mode] = {
@@ -118,7 +118,7 @@ def main():
                 key: round(statistics.median(t[mode][key] for t in trials), 4)
                 for key in ("cached_opt_us", "parse_opt_us")
             }
-            for mode in ("baseline", "no-final-phi")
+            for mode in ("baseline", "no-final-phi", "ordered-phi", "ordered-no-final")
         }
         row = {
             "shader": shader.name, "phi_count": count,
