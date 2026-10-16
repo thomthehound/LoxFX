@@ -91,6 +91,81 @@ def source_variants(work):
         require(("spirv-as", "--target-env", "vulkan1.2", asm, "-o", output), f"assemble {name}")
         require(("spirv-val", "--target-env", "vulkan1.2", output), f"validate {name}")
         paths.append(output)
+    # Adversarial valid structured CFGs with an explicit function-local
+    # store/load pair, so dominance forwarding is exercised instead of merely
+    # executing preoptimized SSA values produced by GLSL compilers.
+    outer = """%choose = OpIEqual %bool %index %zero
+OpSelectionMerge %join None
+OpBranchConditional %choose %left %right
+%left = OpLabel
+__LEFT_STORE__
+OpBranch %join
+%right = OpLabel
+__RIGHT_STORE__
+OpBranch %join
+%join = OpLabel"""
+    if ASSEMBLY.count(outer) != 1:
+        raise RuntimeError("Control-flow dominance fixture template changed")
+    motifs = {
+        "nested_single_store": """%choose = OpIEqual %bool %index %zero
+OpSelectionMerge %join None
+OpBranchConditional %choose %left %right
+%left = OpLabel
+OpBranch %join
+%right = OpLabel
+%choose2 = OpIEqual %bool %index %one
+OpSelectionMerge %inner_merge None
+OpBranchConditional %choose2 %inner_store %inner_merge
+%inner_store = OpLabel
+OpStore %v %replacement
+OpBranch %inner_merge
+%inner_merge = OpLabel
+OpBranch %join
+%join = OpLabel""",
+        "loop_single_store": """OpBranch %header
+%header = OpLabel
+%i = OpPhi %int %member %entry %next %continue
+%less = OpSLessThan %bool %i %loop_one
+OpLoopMerge %join %continue None
+OpBranchConditional %less %body %join
+%body = OpLabel
+%choose = OpIEqual %bool %index %zero
+OpSelectionMerge %inner_merge None
+OpBranchConditional %choose %inner_store %inner_merge
+%inner_store = OpLabel
+OpStore %v %replacement
+OpBranch %inner_merge
+%inner_merge = OpLabel
+OpBranch %continue
+%continue = OpLabel
+%next = OpIAdd %int %i %loop_one
+OpBranch %header
+%join = OpLabel""",
+        "switch_duplicate_targets": """OpSelectionMerge %join None
+OpSwitch %index %right 0 %left 2 %left
+%left = OpLabel
+OpStore %v %replacement
+OpBranch %join
+%right = OpLabel
+OpBranch %join
+%join = OpLabel""",
+    }
+    for name, motif in motifs.items():
+        asm = ASSEMBLY.replace(outer, motif)
+        if name == "nested_single_store":
+            asm = asm.replace("%zero = OpConstant %uint 0",
+                              "%zero = OpConstant %uint 0\n%one = OpConstant %uint 1")
+        if name == "loop_single_store":
+            asm = asm.replace("%initial = OpConstant %int 7",
+                              "%initial = OpConstant %int 7\n%loop_one = OpConstant %int 1")
+        source = work / (name + ".spvasm")
+        output = work / (name + ".spv")
+        source.write_text(asm)
+        require(("spirv-as", "--target-env", "vulkan1.2", source, "-o", output),
+                "assemble " + name)
+        require(("spirv-val", "--target-env", "vulkan1.2", output),
+                "validate " + name)
+        paths.append(output)
     return paths
 
 
