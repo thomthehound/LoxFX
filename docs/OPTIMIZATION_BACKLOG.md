@@ -293,6 +293,18 @@ temporary host staging freed after its initialization/diagnostic
 submission completes. Three dynamic/rest buffer allocations per groom
 are still dedicated and have no measured performance baseline.
 
+**2026-10-15/16, PR #27 — host-owned initial upload:** Native Vulkan
+and D3D12 now offer move-only `PendingGroomUpload` transactions with
+host-owned `record_initial_upload` into a caller's commands. Both initial
+groom buffers and CPU staging stay alive until explicit post-fence finalization,
+and the old blocking diagnostic convenience is implemented on top of that
+primitive. Native software GPU tests stage and upload two grooms in one
+host-owned command batch and check no implicit diagnostic submission.
+This is correctness and scheduler control, **not** a measured allocation
+or throughput optimization. The size and number of dedicated allocations
+are unchanged. GPU staging pooling and lifetime optimization must be
+measured against this baseline under actual frames in flight.
+
 **Suspected cost:** multiple dedicated Vulkan allocations can fragment
 heaps and add allocation overhead at scene load. Shared staging and
 suballocation may help, but no multi-groom hardware measurements exist.
