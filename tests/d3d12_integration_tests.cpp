@@ -36,7 +36,8 @@ loxfx::GroomAsset fixture(float base, std::uint32_t guides) {
 // A deliberately independent host command allocator, list, queue signal and
 // fence. The simulator never sees the allocator, fence, or host wait.
 void submit_host_commands(gpu::DeviceContext& context,
-                          const gpu::GroomState& groom) {
+                          const gpu::GroomState& groom,
+                          const gpu::GroomState* second = nullptr) {
     const auto external=context.borrowed_handles();
     ComPtr<ID3D12CommandAllocator> allocator;
     hrcheck(external.device->CreateCommandAllocator(
@@ -49,8 +50,20 @@ void submit_host_commands(gpu::DeviceContext& context,
             "host command list");
     const auto submissions=context.diagnostic_submission_count();
     constexpr float dt=1.0f/60.0f;
-    context.record_integration(commands.Get(),groom,
-                {.time_step=dt,.gravity=9.81f,.damping=0},1);
+    if (second) {
+        // Both six-stage frames are recorded into ONE host-owned list.
+        loxfx::NativeFrameParameters a{};
+        a.integration.gravity=0.0f;
+        a.integration.root_translation_x=0.25f;
+        a.length_wind.length_iterations=2;
+        loxfx::NativeFrameParameters b=a;
+        b.integration.root_translation_x=-0.40f;
+        context.record_frame(commands.Get(),groom,a);
+        context.record_frame(commands.Get(),*second,b);
+    } else {
+        context.record_integration(commands.Get(),groom,
+                    {.time_step=dt,.gravity=9.81f,.damping=0},1);
+    }
     require(context.diagnostic_submission_count()==submissions,
             "external recording must not submit internal work");
     hrcheck(commands->Close(),"host close command list");
@@ -695,6 +708,25 @@ int main(int argc,char** argv) {
                 }
             }
         }
+
+        // Full frames in one host-controlled D3D12 list/submission.
+        auto host_a_prep=loxfx::prepare_groom(fixture(0.0f,1),
+            {.followers_per_guide=1});
+        auto host_b_prep=loxfx::prepare_groom(fixture(5.0f,2),
+            {.followers_per_guide=2});
+        require(host_a_prep && host_b_prep,
+                "prepare full-frame D3D12 host recording grooms");
+        auto host_a=context.prepare_diagnostic(*host_a_prep);
+        auto host_b=context.prepare_diagnostic(*host_b_prep);
+        submit_host_commands(context,host_a,&host_b);
+        const auto output_a=context.diagnostic_read_positions(host_a);
+        const auto output_b=context.diagnostic_read_positions(host_b);
+        require(std::abs(output_a[0].x-0.25f)<0.001f &&
+                std::abs(output_b[0].x+0.40f)<0.001f,
+                "full-frame host D3D12 submit did not move guide roots");
+        require(std::abs(output_a[5].x-0.25f)<0.001f &&
+                std::abs(output_b[5].x+0.40f)<0.001f,
+                "full-frame host D3D12 submit did not publish followers");
 
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
