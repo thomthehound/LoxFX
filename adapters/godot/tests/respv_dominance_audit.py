@@ -93,6 +93,56 @@ def source_variants(work):
     return paths
 
 
+def make_many_load_stress(work, block_count=32, variable_count=64):
+    """Many legal cross-block forwards with the same dominating store block."""
+    path = work / "many_loads.spv"
+    text = [
+        "OpCapability Shader",
+        "OpMemoryModel Logical GLSL450",
+        'OpEntryPoint GLCompute %main "main" %out',
+        "OpExecutionMode %main LocalSize 1 1 1",
+        "OpDecorate %out DescriptorSet 0",
+        "OpDecorate %out Binding 0",
+        "OpDecorate %Out Block",
+        "OpMemberDecorate %Out 0 Offset 0",
+        "%void = OpTypeVoid",
+        "%func = OpTypeFunction %void",
+        "%int = OpTypeInt 32 1",
+        "%Out = OpTypeStruct %int",
+        "%ptrOut = OpTypePointer StorageBuffer %Out",
+        "%ptrStorage = OpTypePointer StorageBuffer %int",
+        "%ptrLocal = OpTypePointer Function %int",
+        "%out = OpVariable %ptrOut StorageBuffer",
+        "%zero = OpConstant %int 0",
+        "%initial = OpConstant %int 7",
+        "%replacement = OpConstant %int 11",
+        "%main = OpFunction %void None %func",
+        "%entry = OpLabel",
+    ]
+    for k in range(variable_count):
+        text.append(f"%v{k} = OpVariable %ptrLocal Function %initial")
+    text.append("OpBranch %b0")
+    for j in range(block_count):
+        text.extend((f"%b{j} = OpLabel", f"OpBranch %b{j+1}" if j + 1 < block_count else "OpBranch %stores"))
+    text.append("%stores = OpLabel")
+    for k in range(variable_count):
+        text.append(f"OpStore %v{k} %replacement")
+    text.extend(("OpBranch %loads", "%loads = OpLabel"))
+    acc = "%zero"
+    for k in range(variable_count):
+        text.extend((f"%l{k} = OpLoad %int %v{k}", f"%s{k} = OpIAdd %int {acc} %l{k}"))
+        acc = f"%s{k}"
+    text.extend((
+        "%dest = OpAccessChain %ptrStorage %out %zero",
+        f"OpStore %dest {acc}", "OpReturn", "OpFunctionEnd"
+    ))
+    source = work / "many_loads.spvasm"
+    source.write_text("\n".join(text) + "\n")
+    require(("spirv-as", "--target-env", "vulkan1.2", source, "-o", path), "many loads assembly")
+    require(("spirv-val", "--target-env", "vulkan1.2", path), "many loads validation")
+    return path
+
+
 def compile_tools(upstream, probe, bench, work):
     code = (upstream / "re-spirv.cpp").read_text()
     original = """            return (aPreIndex < bPreIndex) && (aPostIndex > bPostIndex);"""
@@ -477,6 +527,7 @@ def main():
     work = a.work.resolve()
     upstream = a.upstream.resolve()
     paths = source_variants(work / "shaders")
+    paths.append(make_many_load_stress(work / "shaders"))
     tools = compile_tools(upstream, a.probe.resolve(), a.bench.resolve(), work)
     records = evaluate(tools, paths + a.loxfx, work, a.iterations)
     by_name = {rec["source"]: rec for rec in records}
