@@ -34,10 +34,12 @@ func _run() -> void:
             or bool(renderer.get("synchronization_verified", true))):
         _fail("Interop preflight claims an unsupported GPU ownership mode")
         return
-    if bool(renderer.get("renderer_device_available", false))             and String(renderer.get("status", "")) != "renderer_present_not_negotiated":
+    if (bool(renderer.get("renderer_device_available", false))
+            and String(renderer.get("status", "")) != "renderer_present_not_negotiated"):
         _fail("Interop incorrectly accepts the Godot rendering queue")
         return
-    if not bool(renderer.get("renderer_device_available", false))             and String(renderer.get("status", "")) != "renderer_unavailable":
+    if (not bool(renderer.get("renderer_device_available", false))
+            and String(renderer.get("status", "")) != "renderer_unavailable"):
         _fail("Missing Godot RenderingDevice was not reported accurately")
         return
 
