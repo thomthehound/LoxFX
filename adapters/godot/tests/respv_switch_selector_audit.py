@@ -12,7 +12,7 @@ import json
 from respv_semantic_campaign import SPECS, checked, run, lavapipe_env
 
 def make_fix(src):
-    start=src.index("        else if (opCode == SpvOpSwitch) {")
+    start=src.index("        else if (opCode == SpvOpSwitch) {", src.index("static void optimizerEvaluateTerminator("))
     mid=src.index("            // Make the final label the new default case and reduce the word count.", start)
     end=src.index("\n        }\n\n        if (terminatorReduced) {",mid)
     fragment=src[mid:end]
