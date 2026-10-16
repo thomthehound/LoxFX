@@ -215,7 +215,6 @@ if(LOXFX_BUILD_VULKAN_SMOKE)
       COMMAND "${CMAKE_COMMAND}" -E make_directory "${LOXFX_GODOT_SHADER_DIR}"
       COMMAND "${LOXFX_DXC_EXECUTABLE}" -spirv -T cs_6_6
         -E IntegrationAndGlobalShapeConstraints -DLOXFX_SPIRV=1
-        -DLOXFX_GODOT_PREDICATED=1
         -fspv-target-env=vulkan1.2 -fspv-entrypoint-name=main
         -Fo "${LOXFX_GODOT_INTEGRATION_SPV}"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
