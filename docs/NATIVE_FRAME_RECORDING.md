@@ -16,6 +16,15 @@ The source-ordered stages remain:
 5. Length constraints and wind
 6. Follower positions and tangent publication
 
+**Single-clock contract:** `NativeFrameParameters::time_step` is the sole
+frame time step. The backend-neutral `native_frame_stage_parameters()`
+lowers it into both the integration and length/wind pass structures.
+It is impossible to independently configure integration and wind time
+steps through this composite API. Each standalone per-stage recorder keeps
+its established parameter interface. Both native test suites exercise an
+active wind at 30 Hz and compare the complete-frame result against explicit
+stage recording with a common 30 Hz clock; core CI also checks the lowering.
+
 The implementation delegates to the **existing** individually verified
 native recorders; their resource bindings, shader mathematics and stage
 barriers are not duplicated or modified. The command buffer/list belongs to
