@@ -87,6 +87,11 @@ if(BUILD_TESTING)
   add_executable(loxfx_prepared_groom_tests tests/prepared_groom_tests.cpp)
   target_link_libraries(loxfx_prepared_groom_tests PRIVATE LoxFX::Core)
   add_test(NAME loxfx_prepared_groom COMMAND loxfx_prepared_groom_tests)
+  add_executable(loxfx_native_frame_parameters_tests
+    tests/native_frame_parameters_tests.cpp)
+  target_link_libraries(loxfx_native_frame_parameters_tests PRIVATE LoxFX::Core)
+  add_test(NAME loxfx_native_frame_parameters
+    COMMAND loxfx_native_frame_parameters_tests)
 endif()
 
 # Public, relocatable CMake package for independently built consumers.
