@@ -37,7 +37,8 @@ loxfx::GroomAsset fixture(float base, std::uint32_t guides) {
 // fence. The simulator never sees the allocator, fence, or host wait.
 void submit_host_commands(gpu::DeviceContext& context,
                           const gpu::GroomState& groom,
-                          const gpu::GroomState* second = nullptr) {
+                          const gpu::GroomState* second = nullptr,
+                          bool compare_clock = false) {
     const auto external=context.borrowed_handles();
     ComPtr<ID3D12CommandAllocator> allocator;
     hrcheck(external.device->CreateCommandAllocator(
@@ -50,7 +51,32 @@ void submit_host_commands(gpu::DeviceContext& context,
             "host command list");
     const auto submissions=context.diagnostic_submission_count();
     constexpr float dt=1.0f/60.0f;
-    if (second) {
+    if (compare_clock) {
+        require(second!=nullptr,"manual clock comparison needs two grooms");
+        // Record a full composite frame and the equivalent explicit stages
+        // at 30 Hz WITH wind, into the same host-owned command list.
+        loxfx::NativeFrameParameters clock{};
+        clock.time_step=1.0f/30.0f;
+        clock.gravity=0.0f;
+        clock.root_translation_x=0.15f;
+        clock.length_iterations=2;
+        clock.winds[1]={420.0f,0.0f,0.0f,0.0f};
+        context.record_frame(commands.Get(),groom,clock);
+        loxfx::IntegrationParameters integration{};
+        integration.time_step=clock.time_step;
+        integration.gravity=clock.gravity;
+        integration.root_translation_x=clock.root_translation_x;
+        loxfx::LengthWindParameters wind{};
+        wind.time_step=clock.time_step;
+        wind.length_iterations=clock.length_iterations;
+        wind.winds=clock.winds;
+        context.record_integration(commands.Get(),*second,integration);
+        context.record_strand_level(commands.Get(),*second,clock.strand_motion);
+        context.record_velocity_shock(commands.Get(),*second);
+        context.record_local_shape(commands.Get(),*second,clock.local_shape_stiffness);
+        context.record_length_wind(commands.Get(),*second,wind);
+        context.record_followers(commands.Get(),*second);
+    } else if (second) {
         // Both six-stage frames are recorded into ONE host-owned list.
         loxfx::NativeFrameParameters a{};
         a.gravity=0.0f;
@@ -731,6 +757,29 @@ int main(int argc,char** argv) {
                 std::abs(output_b[4].x-output_b[0].x)<0.001f &&
                 std::abs(output_b[5].x-output_b[1].x)<0.001f,
                 "full-frame host D3D12 submit failed guide-relative follower publication");
+
+        // Non-default 30 Hz plus nonzero wind must match manual stage
+        // recording with one consistent timestep in both dependent passes.
+        auto clock_prep=loxfx::prepare_groom(fixture(0.0f,1),
+            {.followers_per_guide=1});
+        require(clock_prep.has_value(),"prepare D3D12 wind clock fixture");
+        auto composite=context.prepare_diagnostic(*clock_prep);
+        auto manual=context.prepare_diagnostic(*clock_prep);
+        submit_host_commands(context,composite,&manual,true);
+        const auto composite_positions=context.diagnostic_read_positions(composite);
+        const auto manual_positions=context.diagnostic_read_positions(manual);
+        require(composite_positions.size()==manual_positions.size(),
+                "D3D12 full-frame and manual strand counts differ");
+        for(std::size_t i=0;i<composite_positions.size();++i) {
+            const auto& a=composite_positions[i];
+            const auto& b=manual_positions[i];
+            require(std::abs(a.x-b.x)<0.0003f &&
+                    std::abs(a.y-b.y)<0.0003f &&
+                    std::abs(a.z-b.z)<0.0003f,
+                    "D3D12 full-frame wind uses a different simulation clock");
+        }
+        require(std::abs(manual_positions[2].x-clock_prep->rest_positions[2].x)>0.001f,
+                "D3D12 wind regression did not exercise affected vertices");
 
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
