@@ -9,6 +9,7 @@ on:
       - 'adapters/godot/tests/respv_phi_graph_probe.cpp'
       - 'adapters/godot/tests/respv_phi_pass_bench.py'
       - 'adapters/godot/tests/respv_phi_archaeology.py'
+      - 'adapters/godot/tests/respv_phi_patch_interaction.py'
       - 'adapters/godot/tests/respv_phi_2024_probe.cpp'
       - 'adapters/godot/tests/respv_phi_order_audit.py'
   workflow_dispatch:
@@ -64,6 +65,22 @@ jobs:
             --work build/phi-audit-evidence \
             --loxfx build/phi-audit-loxfx/shaders/godot/loxfx_integration.spv \
                     build/phi-audit-loxfx/shaders/godot/loxfx_follower_publish.spv
+      - name: Acquire original modern optimizer without the loop patch
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/renderbag/re-spirv.git build/phi-audit-unpatched
+      - name: Check whether our loop fix makes the final Phi pass obsolete
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_phi_patch_interaction.py \
+            --upstream build/phi-audit-unpatched \
+            --patched-upstream build/phi-audit-upstream \
+            --work build/phi-audit-evidence/patch-interaction \
+            --probe adapters/godot/tests/respv_phi_probe.cpp \
+            --shader-folder build/phi-audit-evidence/shaders \
+            --loxfx build/phi-audit-loxfx/shaders/godot/loxfx_integration.spv \
+                    build/phi-audit-loxfx/shaders/godot/loxfx_follower_publish.spv
       - name: Recreate the historical August 2024 optimizer source
         run: |
           set -euo pipefail
@@ -98,6 +115,7 @@ jobs:
         with:
           name: respv-phi-order-audit
           path: |
+            build/phi-audit-evidence/patch-interaction/interaction.json
             build/phi-audit-evidence/archaeology/historical.json
             build/phi-audit-evidence/pass-cost/results.json
             build/phi-audit-evidence/audit.json
