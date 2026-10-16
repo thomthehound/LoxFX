@@ -277,6 +277,17 @@ def compile_tools(upstream, probe, bench, work):
         call, "optimizerDoesInstructionDominate(rContext, storeInstruction, loadInstruction)"
     )
     variants["cached_filtered_exact"] = variant_code
+    skip_final = """        if (!optimizerCompactPhis(context)) {
+            return false;
+        }"""
+    if variant_code.count(skip_final) != 1 or code.count(skip_final) != 1:
+        raise RuntimeError("Final-Phi compaction hook has changed")
+    disabled = """        // Experimental: omit redundant final Phi compaction.
+        if (false && !optimizerCompactPhis(context)) {
+            return false;
+        }"""
+    variants["cached_without_final_phi"] = variant_code.replace(skip_final, disabled)
+    variants["baseline_without_final_phi"] = code.replace(skip_final, disabled)
 
 
     # Correct, reusable dominance metadata: derive CFG edges from *actual*
@@ -480,7 +491,7 @@ def evaluate(probes, shaders, work, iterations):
     for shader in shaders:
         entry = {"source": shader.name, "outputs": {}, "times_us": {}, "parse_run_us": {}}
         original_text = disasm(shader)
-        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "precomputed_domtree"):
+        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "cached_without_final_phi", "baseline_without_final_phi", "precomputed_domtree"):
             target = work / "outputs" / name / shader.name
             target.parent.mkdir(parents=True, exist_ok=True)
             p = run(probes[(name, "probe")], shader, target)
@@ -528,9 +539,21 @@ def main():
     upstream = a.upstream.resolve()
     paths = source_variants(work / "shaders")
     paths.append(make_many_load_stress(work / "shaders"))
+    from respv_phi_pass_bench import build_phi_flood
+    paths.extend(build_phi_flood(work / "shaders", n) for n in (16, 64, 128))
     tools = compile_tools(upstream, a.probe.resolve(), a.bench.resolve(), work)
     records = evaluate(tools, paths + a.loxfx, work, a.iterations)
     by_name = {rec["source"]: rec for rec in records}
+    for rec in records:
+        filename = rec["source"]
+        base = work / "outputs" / "baseline" / filename
+        no_final = work / "outputs" / "baseline_without_final_phi" / filename
+        cached = work / "outputs" / "cached_filtered_exact" / filename
+        no_final_corrected = work / "outputs" / "cached_without_final_phi" / filename
+        if base.read_bytes() != no_final.read_bytes():
+            raise AssertionError(f"Phi pass removal changed baseline: {filename}")
+        if cached.read_bytes() != no_final_corrected.read_bytes():
+            raise AssertionError(f"Phi pass removal changed corrected result: {filename}")
     for rec in records:
         filename = rec["source"]
         exact = work / "outputs" / "exact_reachability" / filename
