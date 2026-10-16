@@ -722,11 +722,12 @@ void DeviceContext::record_frame(VkCommandBuffer cb, const GroomState& state,
     // These record-only calls preserve the existing source-derived stage
     // order and their per-stage Vulkan memory barriers. GPU synchronization
     // to any external graphics consumer remains the host's responsibility.
-    record_integration(cb, state, p.integration, p.integration_steps);
+    const auto stages=native_frame_stage_parameters(p);
+    record_integration(cb, state, stages.integration, p.integration_steps);
     record_strand_level(cb, state, p.strand_motion);
     record_velocity_shock(cb, state);
     record_local_shape(cb, state, p.local_shape_stiffness);
-    record_length_wind(cb, state, p.length_wind);
+    record_length_wind(cb, state, stages.length_wind);
     record_followers(cb, state);
 }
 
