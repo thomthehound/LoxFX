@@ -198,6 +198,42 @@ def make_distinct_store_blocks(work, variable_count):
     return path
 
 
+def make_joined_distinct_store_blocks(work, variable_count):
+    """A converging diamond before a long chain of independent store blocks.
+
+    The merge invalidates the CFG-forest shortcut while all following stores
+    still dominate their loads. This forces the lazy-domtree fallback.
+    """
+    source = make_distinct_store_blocks(work, variable_count)
+    text = (work / f"many_distinct_stores_{variable_count}.spvasm").read_text()
+    text = text.replace("%int = OpTypeInt 32 1\n",
+                        "%int = OpTypeInt 32 1\n%bool = OpTypeBool\n", 1)
+    text = text.replace("%replacement = OpConstant %int 11\n",
+                        "%replacement = OpConstant %int 11\n"
+                        "%always = OpConstantTrue %bool\n", 1)
+    original = "OpBranch %s0\n"
+    replacement = """OpSelectionMerge %join None
+OpBranchConditional %always %left %right
+%left = OpLabel
+OpBranch %join
+%right = OpLabel
+OpBranch %join
+%join = OpLabel
+OpBranch %s0
+"""
+    if text.count(original) != 1:
+        raise RuntimeError("Unexpected store fixture entry topology")
+    text = text.replace(original, replacement, 1)
+    asm = work / f"many_joined_stores_{variable_count}.spvasm"
+    output = work / f"many_joined_stores_{variable_count}.spv"
+    asm.write_text(text)
+    require(("spirv-as", "--target-env", "vulkan1.2", asm, "-o", output),
+            "assemble joined-store stress")
+    require(("spirv-val", "--target-env", "vulkan1.2", output),
+            "validate joined-store stress")
+    return output
+
+
 def compile_tools(upstream, probe, bench, work):
     code = (upstream / "re-spirv.cpp").read_text()
     original = """            return (aPreIndex < bPreIndex) && (aPostIndex > bPostIndex);"""
@@ -690,6 +726,7 @@ def main():
     paths = source_variants(work / "shaders")
     paths.append(make_many_load_stress(work / "shaders"))
     paths.extend(make_distinct_store_blocks(work / "shaders", n) for n in (32, 128))
+    paths.extend(make_joined_distinct_store_blocks(work / "shaders", n) for n in (32, 128))
     from respv_phi_pass_bench import build_phi_flood
     paths.extend(build_phi_flood(work / "shaders", n) for n in (16, 64, 128))
     tools = compile_tools(upstream, a.probe.resolve(), a.bench.resolve(), work)
