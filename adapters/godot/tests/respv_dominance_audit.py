@@ -239,7 +239,7 @@ def make_multiple_joined_store_blocks(work, variable_count):
     make_joined_distinct_store_blocks(work, variable_count)
     text = (work / f"many_joined_stores_{variable_count}.spvasm").read_text()
     middle = variable_count // 2
-    branch = f"%s{middle} = OpLabel\\nOpStore %v{middle} %replacement\\nOpBranch %s{middle+1}\\n"
+    branch = f"%s{middle} = OpLabel\nOpStore %v{middle} %replacement\nOpBranch %s{middle+1}\n"
     replacement = f"""%s{middle} = OpLabel
 OpStore %v{middle} %replacement
 OpSelectionMerge %middle_join None
