@@ -43,6 +43,25 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// An upload transaction that owns both pending groom state and upload
+// heap until an externally submitted command list finishes. The host must
+// keep the object alive during GPU execution and call finish ONLY after its
+// completion fence; doing so never submits or waits for GPU work.
+class PendingGroomUpload {
+public:
+    ~PendingGroomUpload();
+    PendingGroomUpload(PendingGroomUpload&&) noexcept;
+    PendingGroomUpload& operator=(PendingGroomUpload&&) noexcept;
+    PendingGroomUpload(const PendingGroomUpload&) = delete;
+    PendingGroomUpload& operator=(const PendingGroomUpload&) = delete;
+    [[nodiscard]] GroomState finish_after_completion() &&;
+private:
+    friend class DeviceContext;
+    struct Impl;
+    explicit PendingGroomUpload(std::unique_ptr<Impl>) noexcept;
+    std::unique_ptr<Impl> impl_;
+};
+
 class DeviceContext {
 public:
     // Standalone chooses a device ONCE. WARP is for functional CI only.
@@ -58,6 +77,10 @@ public:
     DeviceContext& operator=(const DeviceContext&) = delete;
 
     // Diagnostic upload waits explicitly once; NO per-stage CPU readback.
+    [[nodiscard]] PendingGroomUpload prepare_upload(const PreparedGroom& groom);
+    void record_initial_upload(ID3D12GraphicsCommandList* command_list,
+                               PendingGroomUpload& upload) const;
+    // Explicitly blocking convenience for diagnostic users only.
     [[nodiscard]] GroomState prepare_diagnostic(const PreparedGroom& groom);
     // Record the six LoxFX passes on a caller-owned command list.
     // No submission, waits, GPU readback or command-list ownership.
