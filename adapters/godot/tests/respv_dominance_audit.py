@@ -678,7 +678,7 @@ def main():
         filtered = work / "outputs" / "filtered_exact" / filename
         cached = work / "outputs" / "cached_filtered_exact" / filename
         adaptive = work / "outputs" / "adaptive_domtree" / filename
-        if (exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes() or exact.read_bytes() != adaptive.read_bytes():
+        if (exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes() or exact.read_bytes() != adaptive.read_bytes()):
             raise AssertionError(f"Filtered/cached dominance diverged from oracle: {filename}")
     # Assertions describe observable semantics, not merely whether SPIR-V validates.
     for name in ("right_store.spv", "entry_store.spv"):
