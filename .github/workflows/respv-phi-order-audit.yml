@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/respv-phi-order-audit.yml'
       - 'adapters/godot/tests/respv_phi_probe.cpp'
+      - 'adapters/godot/tests/respv_phi_graph_probe.cpp'
       - 'adapters/godot/tests/respv_phi_order_audit.py'
   workflow_dispatch:
 
@@ -56,6 +57,7 @@ jobs:
           python3 adapters/godot/tests/respv_phi_order_audit.py \
             --upstream build/phi-audit-upstream \
             --probe adapters/godot/tests/respv_phi_probe.cpp \
+            --graph-probe adapters/godot/tests/respv_phi_graph_probe.cpp \
             --work build/phi-audit-evidence \
             --loxfx build/phi-audit-loxfx/shaders/godot/loxfx_integration.spv \
                     build/phi-audit-loxfx/shaders/godot/loxfx_follower_publish.spv
