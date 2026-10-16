@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: re-SPIRV independent upstream overlay qualification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/respv-overlay-qualification.yml'
+      - 'adapters/godot/tests/respv_review_overlay_patches.json'
+      - 'adapters/godot/tests/respv_review_overlay_validation.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install SPIR-V tools and software Vulkan runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y spirv-tools glslc libvulkan-dev mesa-vulkan-drivers
+      - name: Obtain the pinned, unmodified upstream revision
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/renderbag/re-spirv.git build/respv-review-upstream
+          git -C build/respv-review-upstream fetch --depth 1 origin \
+            29a77fca357567d00aa37b8ffde19c19cfe477c4
+          git -C build/respv-review-upstream checkout --detach \
+            29a77fca357567d00aa37b8ffde19c19cfe477c4
+          git -C build/respv-review-upstream submodule update --init --recursive
+      - name: Independently apply and validate all four proposed patches
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_review_overlay_validation.py \
+            --upstream build/respv-review-upstream \
+            --patches adapters/godot/tests/respv_review_overlay_patches.json \
+            --work build/respv-review-qualification
+      - name: Retain review-only qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: respv-upstream-overlay-qualification
+          path: |
+            build/respv-review-qualification/qualification.json
+            build/respv-review-qualification/fixtures/*.spvasm
+            build/respv-review-qualification/fixtures/*.comp
+          if-no-files-found: warn

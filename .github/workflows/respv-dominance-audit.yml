@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: re-SPIRV dominance and optimizer speed audit
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/respv-dominance-audit.yml'
+      - 'adapters/godot/tests/respv_bench.cpp'
+      - 'adapters/godot/tests/respv_dominance_audit.py'
+      - 'adapters/godot/tests/respv_dominance_gpu.py'
+      - 'adapters/godot/tests/respv_combined_campaign.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dominance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install SPIR-V compiler and tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y spirv-tools glslc libvulkan-dev mesa-vulkan-drivers
+      - name: Install official DXC
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dxc"
+          curl --fail --location --retry 3 \
+            https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP/dxc"
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/dxc/lib" >> "$GITHUB_ENV"
+      - name: Build unchanged LoxFX SPIR-V input modules
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/dom-loxfx \
+            -DLOXFX_BUILD_GODOT_RENDERER_PROOF=ON \
+            -DLOXFX_BUILD_TOOLS=OFF -DBUILD_TESTING=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/dom-loxfx \
+            --target loxfx_godot_renderer_shaders --parallel 2
+      - name: Acquire upstream optimizer for offline experimental variants
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/renderbag/re-spirv.git build/dom-upstream
+          git -C build/dom-upstream apply \
+            "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
+      - name: Compare DFS ancestry against conservative dominance and benchmark both
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_dominance_audit.py \
+            --upstream build/dom-upstream \
+            --probe adapters/godot/tests/respv_phi_probe.cpp \
+            --bench adapters/godot/tests/respv_bench.cpp \
+            --work build/dom-evidence \
+            --loxfx build/dom-loxfx/shaders/godot/loxfx_integration.spv \
+                    build/dom-loxfx/shaders/godot/loxfx_follower_publish.spv
+      - name: Execute dominance counterexample and corrected outputs on Vulkan
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_dominance_gpu.py \
+            --work build/dom-evidence \
+            --oracle adapters/godot/tests/respv_vulkan_oracle.cpp \
+            --result build/dom-evidence/dominance_gpu.json
+      - name: Cross-check combined dominance, switch and Phi corrections with Vulkan
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_combined_campaign.py \
+            --upstream build/dom-upstream \
+            --dominance-evidence build/dom-evidence \
+            --work build/dom-evidence/combined \
+            --probe adapters/godot/tests/respv_semantic_probe.cpp \
+            --bench adapters/godot/tests/respv_switch_bench.cpp \
+            --plain-bench adapters/godot/tests/respv_bench.cpp \
+            --oracle adapters/godot/tests/respv_vulkan_oracle.cpp \
+            --loxfx build/dom-loxfx/shaders/godot/loxfx_integration.spv \
+                    build/dom-loxfx/shaders/godot/loxfx_follower_publish.spv
+      - name: Preserve disassembly and comparative timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: respv-dominance-evidence
+          path: |
+            build/dom-evidence/dominance.json
+            build/dom-evidence/dominance_gpu.json
+            build/dom-evidence/combined/report.json
+            build/dom-evidence/combined/inputs/*.comp
+            build/dom-evidence/shaders/*.spvasm
+            build/dom-evidence/outputs/**/*.spv
+          if-no-files-found: warn
