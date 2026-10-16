@@ -139,26 +139,21 @@ struct NativeDiagnostic::Impl {
         std::lock_guard lock(device->commands);
         auto& context = device->context;
         auto cmd = context.begin_diagnostic_commands();
-        context.record_integration(cmd, *state, {
-            .time_step = seconds,
-            .gravity = gravity,
-            .damping = damping,
-            .root_translation_x = rx,
-            .root_translation_y = ry,
-            .root_translation_z = rz
-        });
-        context.record_strand_level(cmd, *state, {
-            .velocity_shock_coefficient = 0.0f,
-            .acceleration_threshold = 100.0f
-        });
-        context.record_velocity_shock(cmd, *state);
-        context.record_local_shape(cmd, *state, 0.6f);
-        LengthWindParameters wind{};
-        wind.time_step = seconds;
-        wind.length_iterations = 4;
-        wind.winds[0] = {wx, wy, wz, 0.0f};
-        context.record_length_wind(cmd, *state, wind);
-        context.record_followers(cmd, *state);
+        NativeFrameParameters frame{};
+        frame.time_step = seconds;
+        frame.gravity = gravity;
+        frame.damping = damping;
+        frame.root_translation_x = rx;
+        frame.root_translation_y = ry;
+        frame.root_translation_z = rz;
+        frame.strand_motion.velocity_shock_coefficient = 0.0f;
+        frame.strand_motion.acceleration_threshold = 100.0f;
+        frame.local_shape_stiffness = 0.6f;
+        frame.length_iterations = 4;
+        frame.winds[0] = {wx, wy, wz, 0.0f};
+        // The Godot diagnostic is now a consumer of the same complete,
+        // submit-free recorder that a renderer-owned queue can invoke.
+        context.record_frame(cmd, *state, frame);
         // Diagnostic-only CPU synchronization: one completed six-stage
         // compute batch and one readback. Never claim production throughput.
         context.submit_diagnostic_and_wait();

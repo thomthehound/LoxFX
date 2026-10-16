@@ -87,7 +87,11 @@ through a blocking GPU→CPU→Godot mesh bridge. This is not a production frame
 path. A non-invasive Godot renderer **preflight** now reports active
 RenderingDevice availability and adapter metadata while explicitly refusing
 to claim borrowed handles, native queue submission or GPU-resident output.
-The next gates remain renderer-device ownership and GPU resource
+The native Vulkan/D3D12 backends now have a source-ordered six-stage
+`record_frame` that can append multiple independent grooms to a
+caller-owned command buffer/list with no implicit GPU submission or readback.
+See [native frame recording](NATIVE_FRAME_RECORDING.md). The next gates
+remain renderer-device ownership and GPU resource
 synchronization, real skeletal attachment orientation/contact, high-quality
 strand shading and hardware visual/full-frame performance qualification.
 See [Godot native interop audit](GODOT_RENDERER_INTEROP.md). See

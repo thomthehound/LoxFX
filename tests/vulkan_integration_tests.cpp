@@ -695,6 +695,104 @@ int main(int argc,char** argv) {
             }
         }
 
+        // Full source-ordered simulation of two grooms recorded into ONE
+        // independent host-owned command buffer/queue submission.
+        // Unlike diagnostic_read_positions, record_frame must never wait
+        // or submit on behalf of the host.
+        auto host_a_source=loxfx::prepare_groom(fixture(0.0f,1),
+            {.followers_per_guide=1});
+        auto host_b_source=loxfx::prepare_groom(fixture(5.0f,2),
+            {.followers_per_guide=2});
+        check(host_a_source && host_b_source,"prepare frame recording grooms");
+        auto host_a=context.prepare(*host_a_source);
+        auto host_b=context.prepare(*host_b_source);
+        auto external_frame=context.borrowed_handles();
+        HostBatch frame_batch(external_frame.logical);
+        frame_batch.init(external_frame.queue_family);
+        frame_batch.begin();
+        const auto before_recording=context.gpu_submission_count();
+        loxfx::NativeFrameParameters frame_a{};
+        frame_a.gravity=0.0f;
+        frame_a.root_translation_x=0.25f;
+        frame_a.length_iterations=2;
+        loxfx::NativeFrameParameters frame_b=frame_a;
+        frame_b.root_translation_x=-0.40f;
+        context.record_frame(frame_batch.commands,host_a,frame_a);
+        context.record_frame(frame_batch.commands,host_b,frame_b);
+        check(context.gpu_submission_count()==before_recording,
+              "complete native Vulkan frame recorder performed hidden submission");
+        frame_batch.submit(external_frame.compute_queue);
+        check(context.gpu_submission_count()==before_recording,
+              "host-owned full-frame Vulkan queue was counted as diagnostic submission");
+        auto frame_a_positions=context.diagnostic_read_positions(host_a);
+        auto frame_b_positions=context.diagnostic_read_positions(host_b);
+        check(std::abs(frame_a_positions[0].x-0.25f)<0.001f &&
+              std::abs(frame_b_positions[0].x+0.40f)<0.001f,
+              "host-queued full native frame did not move independent roots");
+        // Stage six follows each *guide vertex* after shape/length passes:
+        // distal vertices need not translate rigidly with the guide root.
+        check(std::abs(frame_a_positions[4].x-frame_a_positions[0].x)<0.001f &&
+              std::abs(frame_a_positions[5].x-frame_a_positions[1].x)<0.001f &&
+              std::abs(frame_b_positions[4].x-frame_b_positions[0].x)<0.001f &&
+              std::abs(frame_b_positions[5].x-frame_b_positions[1].x)<0.001f,
+              "host-queued Vulkan full frame failed guide-relative follower publication");
+
+        // Regression for a single frame clock: a non-default 1/30 s
+        // frame with active wind must agree with explicit stage-by-stage
+        // recording when BOTH stages receive the same time step.
+        auto clock_prep=loxfx::prepare_groom(fixture(0.0f,1),
+            {.followers_per_guide=1});
+        check(clock_prep.has_value(),"prepare wind/timestep regression groom");
+        auto composite=context.prepare(*clock_prep);
+        auto manual=context.prepare(*clock_prep);
+        auto no_wind=context.prepare(*clock_prep);
+        HostBatch clock_batch(external_frame.logical);
+        clock_batch.init(external_frame.queue_family);
+        clock_batch.begin();
+        loxfx::NativeFrameParameters clock{};
+        clock.time_step=1.0f/30.0f;
+        clock.gravity=0.0f;
+        clock.root_translation_x=0.15f;
+        clock.length_iterations=2;
+        clock.winds[1]={420.0f,0.0f,0.0f,0.0f};
+        context.record_frame(clock_batch.commands,composite,clock);
+        loxfx::IntegrationParameters manual_integration{};
+        manual_integration.time_step=clock.time_step;
+        manual_integration.gravity=clock.gravity;
+        manual_integration.root_translation_x=clock.root_translation_x;
+        loxfx::LengthWindParameters manual_wind{};
+        manual_wind.time_step=clock.time_step;
+        manual_wind.length_iterations=clock.length_iterations;
+        manual_wind.winds=clock.winds;
+        context.record_integration(clock_batch.commands,manual,manual_integration);
+        context.record_strand_level(clock_batch.commands,manual,clock.strand_motion);
+        context.record_velocity_shock(clock_batch.commands,manual);
+        context.record_local_shape(clock_batch.commands,manual,clock.local_shape_stiffness);
+        context.record_length_wind(clock_batch.commands,manual,manual_wind);
+        context.record_followers(clock_batch.commands,manual);
+        auto calm=clock;
+        calm.winds={};
+        context.record_frame(clock_batch.commands,no_wind,calm);
+        clock_batch.submit(external_frame.compute_queue);
+        const auto composite_positions=context.diagnostic_read_positions(composite);
+        const auto manual_positions=context.diagnostic_read_positions(manual);
+        const auto calm_positions=context.diagnostic_read_positions(no_wind);
+        check(composite_positions.size()==manual_positions.size(),
+              "composite/manual frame output has different vertex counts");
+        for(std::size_t i=0;i<composite_positions.size();++i) {
+            const auto& a=composite_positions[i];
+            const auto& b=manual_positions[i];
+            check(std::abs(a.x-b.x)<0.0003f &&
+                  std::abs(a.y-b.y)<0.0003f &&
+                  std::abs(a.z-b.z)<0.0003f,
+                  "composite Vulkan frame disagrees with unified manual wind clock");
+        }
+        // The no-wind control excludes root translation and shape effects:
+        // any measurable difference at the interior guide vertex comes from
+        // wind itself, rather than unrelated motion of the strand.
+        check(std::abs(manual_positions[2].x-calm_positions[2].x)>0.001f,
+              "Vulkan clock regression did not produce measurable wind motion");
+
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared

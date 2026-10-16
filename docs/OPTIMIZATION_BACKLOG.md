@@ -143,7 +143,25 @@ GPU timestamps, submission overhead, barriers, stalls and CPU driver cost
 before testing batching, prepared descriptors or safe pass fusion. Never
 delete a synchronization dependency based on a theoretical speedup.
 
-**Prerequisite:** correct GPU executor. **Status:** blocked.
+**Progress, 15 October 2026:** added `DeviceContext::record_frame` to
+both native backends: the composite now derives integration and wind timing
+from one authoritative `NativeFrameParameters::time_step` (Codex P2,
+PR #26). Cross-backend tests compare 30 Hz with nonzero wind against explicit
+stage-by-stage recording to prevent inconsistent simulation clocks. Six
+existing source-ordered stage recorders execute
+inside a caller-owned command buffer/list without hidden per-groom submit,
+fence, or readback. Linux Vulkan and Windows D3D12 tests record **two**
+different grooms into **one** externally submitted command batch and verify
+guide/follower outputs afterward. The Godot diagnostic adapter calls the
+same native recorder but still waits and reads back for visualization. This
+is a scheduling-capability/correctness step, not an optimized production frame.
+
+**Remaining experiment:** record and synchronize real frames in the host
+renderer, then compare stage-major versus groom-major ordering, submissions,
+barriers and stalls on consumer GPUs with the same simulation workload.
+**Status:** implemented-awaiting-measurement for host-owned multi-groom
+full-frame recording; host renderer batching remains blocked.
+**Prerequisite:** renderer-owned execution and hardware profile.
 **Source:** [simulation execution trace](SIMULATION_EXECUTION_TRACE.md).
 
 **Evidence / source:** TressFX 4.1 `TressFXSimulation.cpp::Simulate` and `DispatchComputeShader`; [source synchronization trace](SIMULATION_EXECUTION_TRACE.md). **Suspected cost:** per-object dispatch/bind/barrier overhead and stalls; not quantified.

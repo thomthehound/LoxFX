@@ -36,7 +36,10 @@ loxfx::GroomAsset fixture(float base, std::uint32_t guides) {
 // A deliberately independent host command allocator, list, queue signal and
 // fence. The simulator never sees the allocator, fence, or host wait.
 void submit_host_commands(gpu::DeviceContext& context,
-                          const gpu::GroomState& groom) {
+                          const gpu::GroomState& groom,
+                          const gpu::GroomState* second = nullptr,
+                          bool compare_clock = false,
+                          const gpu::GroomState* quiet = nullptr) {
     const auto external=context.borrowed_handles();
     ComPtr<ID3D12CommandAllocator> allocator;
     hrcheck(external.device->CreateCommandAllocator(
@@ -49,8 +52,49 @@ void submit_host_commands(gpu::DeviceContext& context,
             "host command list");
     const auto submissions=context.diagnostic_submission_count();
     constexpr float dt=1.0f/60.0f;
-    context.record_integration(commands.Get(),groom,
-                {.time_step=dt,.gravity=9.81f,.damping=0},1);
+    if (compare_clock) {
+        require(second!=nullptr && quiet!=nullptr,
+                "wind clock comparison needs composite/manual/control grooms");
+        // Record a full composite frame and the equivalent explicit stages
+        // at 30 Hz WITH wind, into the same host-owned command list.
+        loxfx::NativeFrameParameters clock{};
+        clock.time_step=1.0f/30.0f;
+        clock.gravity=0.0f;
+        clock.root_translation_x=0.15f;
+        clock.length_iterations=2;
+        clock.winds[1]={420.0f,0.0f,0.0f,0.0f};
+        context.record_frame(commands.Get(),groom,clock);
+        loxfx::IntegrationParameters integration{};
+        integration.time_step=clock.time_step;
+        integration.gravity=clock.gravity;
+        integration.root_translation_x=clock.root_translation_x;
+        loxfx::LengthWindParameters wind{};
+        wind.time_step=clock.time_step;
+        wind.length_iterations=clock.length_iterations;
+        wind.winds=clock.winds;
+        context.record_integration(commands.Get(),*second,integration);
+        context.record_strand_level(commands.Get(),*second,clock.strand_motion);
+        context.record_velocity_shock(commands.Get(),*second);
+        context.record_local_shape(commands.Get(),*second,clock.local_shape_stiffness);
+        context.record_length_wind(commands.Get(),*second,wind);
+        context.record_followers(commands.Get(),*second);
+        auto calm=clock;
+        calm.winds={};
+        context.record_frame(commands.Get(),*quiet,calm);
+    } else if (second) {
+        // Both six-stage frames are recorded into ONE host-owned list.
+        loxfx::NativeFrameParameters a{};
+        a.gravity=0.0f;
+        a.root_translation_x=0.25f;
+        a.length_iterations=2;
+        loxfx::NativeFrameParameters b=a;
+        b.root_translation_x=-0.40f;
+        context.record_frame(commands.Get(),groom,a);
+        context.record_frame(commands.Get(),*second,b);
+    } else {
+        context.record_integration(commands.Get(),groom,
+                    {.time_step=dt,.gravity=9.81f,.damping=0},1);
+    }
     require(context.diagnostic_submission_count()==submissions,
             "external recording must not submit internal work");
     hrcheck(commands->Close(),"host close command list");
@@ -695,6 +739,56 @@ int main(int argc,char** argv) {
                 }
             }
         }
+
+        // Full frames in one host-controlled D3D12 list/submission.
+        auto host_a_prep=loxfx::prepare_groom(fixture(0.0f,1),
+            {.followers_per_guide=1});
+        auto host_b_prep=loxfx::prepare_groom(fixture(5.0f,2),
+            {.followers_per_guide=2});
+        require(host_a_prep && host_b_prep,
+                "prepare full-frame D3D12 host recording grooms");
+        auto host_a=context.prepare_diagnostic(*host_a_prep);
+        auto host_b=context.prepare_diagnostic(*host_b_prep);
+        submit_host_commands(context,host_a,&host_b);
+        const auto output_a=context.diagnostic_read_positions(host_a);
+        const auto output_b=context.diagnostic_read_positions(host_b);
+        require(std::abs(output_a[0].x-0.25f)<0.001f &&
+                std::abs(output_b[0].x+0.40f)<0.001f,
+                "full-frame host D3D12 submit did not move guide roots");
+        // A follower's vertex tracks the corresponding post-constraint
+        // guide vertex, not a rigid translation of the guide root.
+        require(std::abs(output_a[4].x-output_a[0].x)<0.001f &&
+                std::abs(output_a[5].x-output_a[1].x)<0.001f &&
+                std::abs(output_b[4].x-output_b[0].x)<0.001f &&
+                std::abs(output_b[5].x-output_b[1].x)<0.001f,
+                "full-frame host D3D12 submit failed guide-relative follower publication");
+
+        // Non-default 30 Hz plus nonzero wind must match manual stage
+        // recording with one consistent timestep in both dependent passes.
+        auto clock_prep=loxfx::prepare_groom(fixture(0.0f,1),
+            {.followers_per_guide=1});
+        require(clock_prep.has_value(),"prepare D3D12 wind clock fixture");
+        auto composite=context.prepare_diagnostic(*clock_prep);
+        auto manual=context.prepare_diagnostic(*clock_prep);
+        auto quiet=context.prepare_diagnostic(*clock_prep);
+        submit_host_commands(context,composite,&manual,true,&quiet);
+        const auto composite_positions=context.diagnostic_read_positions(composite);
+        const auto manual_positions=context.diagnostic_read_positions(manual);
+        const auto calm_positions=context.diagnostic_read_positions(quiet);
+        require(composite_positions.size()==manual_positions.size(),
+                "D3D12 full-frame and manual strand counts differ");
+        for(std::size_t i=0;i<composite_positions.size();++i) {
+            const auto& a=composite_positions[i];
+            const auto& b=manual_positions[i];
+            require(std::abs(a.x-b.x)<0.0003f &&
+                    std::abs(a.y-b.y)<0.0003f &&
+                    std::abs(a.z-b.z)<0.0003f,
+                    "D3D12 full-frame wind uses a different simulation clock");
+        }
+        // Compare against identical root/constraint motion without wind.
+        // Translation alone would otherwise make this test vacuously pass.
+        require(std::abs(manual_positions[2].x-calm_positions[2].x)>0.001f,
+                "D3D12 wind clock regression did not produce measurable wind motion");
 
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"

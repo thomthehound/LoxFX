@@ -87,6 +87,11 @@ if(BUILD_TESTING)
   add_executable(loxfx_prepared_groom_tests tests/prepared_groom_tests.cpp)
   target_link_libraries(loxfx_prepared_groom_tests PRIVATE LoxFX::Core)
   add_test(NAME loxfx_prepared_groom COMMAND loxfx_prepared_groom_tests)
+  add_executable(loxfx_native_frame_parameters_tests
+    tests/native_frame_parameters_tests.cpp)
+  target_link_libraries(loxfx_native_frame_parameters_tests PRIVATE LoxFX::Core)
+  add_test(NAME loxfx_native_frame_parameters
+    COMMAND loxfx_native_frame_parameters_tests)
 endif()
 
 # Public, relocatable CMake package for independently built consumers.
@@ -97,7 +102,10 @@ install(TARGETS loxfx_core EXPORT LoxFXTargets
 # Prototype backend headers are not installed as public SDK APIs.
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   PATTERN "vulkan" EXCLUDE
-  PATTERN "d3d12" EXCLUDE)
+  PATTERN "d3d12" EXCLUDE
+  # This frame contract belongs to experimental backend recorders and may
+  # change before a production scheduling API; do not publish it via Core.
+  PATTERN "native_frame_parameters.h" EXCLUDE)
 install(EXPORT LoxFXTargets
   FILE LoxFXTargets.cmake
   NAMESPACE LoxFX::

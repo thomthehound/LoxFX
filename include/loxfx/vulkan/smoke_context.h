@@ -5,6 +5,7 @@
 #pragma once
 #include "loxfx/integration_parameters.h"
 #include "loxfx/length_wind.h"
+#include "loxfx/native_frame_parameters.h"
 #include "loxfx/prepared_groom.h"
 #include "loxfx/strand_motion.h"
 #include <vulkan/vulkan.h>
@@ -64,6 +65,13 @@ public:
     DeviceContext& operator=(const DeviceContext&) = delete;
 
     [[nodiscard]] GroomState prepare(const PreparedGroom& source);
+    // Records all six source-ordered stages into a CALLER-owned command buffer.
+    // Does not begin/end, submit, wait, read back or allocate frame commands.
+    // Caller must discard its partially recorded command buffer on error,
+    // and provide correct completion/graphics-visibility synchronization.
+    void record_frame(VkCommandBuffer command_buffer,
+                      const GroomState& groom,
+                      const NativeFrameParameters& parameters) const;
     // Stage 2 consumes integration outputs; records barrier and one
     // guide-strand dispatch, with no submit/wait/readback.
     // Applies strand-level VSP transforms to guide vertices 2+.
