@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: re-SPIRV Phi Vulkan semantic campaign
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/respv-semantic-campaign.yml'
+      - 'adapters/godot/tests/respv_semantic_campaign.py'
+      - 'adapters/godot/tests/respv_semantic_probe.cpp'
+      - 'adapters/godot/tests/respv_vulkan_oracle.cpp'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Vulkan software renderer, tools and shader compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan-dev glslc spirv-tools
+      - name: Acquire unmodified upstream re-SPIRV and apply only the established loop fix
+        run: |
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/renderbag/re-spirv.git build/respv-semantic-upstream
+          git -C build/respv-semantic-upstream apply \
+            "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
+      - name: Differential shader execution with and without final Phi cleanup
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_semantic_campaign.py \
+            --upstream build/respv-semantic-upstream \
+            --optimizer adapters/godot/tests/respv_semantic_probe.cpp \
+            --vulkan adapters/godot/tests/respv_vulkan_oracle.cpp \
+            --work build/respv-semantic-evidence
+      - name: Preserve semantic outcomes and shader reproducers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: respv-vulkan-semantic-campaign
+          path: |
+            build/respv-semantic-evidence/results.json
+            build/respv-semantic-evidence/inputs/*.comp
+            build/respv-semantic-evidence/inputs/*.spv
+          if-no-files-found: warn
