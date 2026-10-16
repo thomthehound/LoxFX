@@ -724,9 +724,13 @@ int main(int argc,char** argv) {
         require(std::abs(output_a[0].x-0.25f)<0.001f &&
                 std::abs(output_b[0].x+0.40f)<0.001f,
                 "full-frame host D3D12 submit did not move guide roots");
-        require(std::abs(output_a[5].x-0.25f)<0.001f &&
-                std::abs(output_b[5].x+0.40f)<0.001f,
-                "full-frame host D3D12 submit did not publish followers");
+        // A follower's vertex tracks the corresponding post-constraint
+        // guide vertex, not a rigid translation of the guide root.
+        require(std::abs(output_a[4].x-output_a[0].x)<0.001f &&
+                std::abs(output_a[5].x-output_a[1].x)<0.001f &&
+                std::abs(output_b[4].x-output_b[0].x)<0.001f &&
+                std::abs(output_b[5].x-output_b[1].x)<0.001f,
+                "full-frame host D3D12 submit failed guide-relative follower publication");
 
         std::cout<<"D3D12 adapter: "<<context.adapter_name()
                  <<" (WARP; functionality only)"
