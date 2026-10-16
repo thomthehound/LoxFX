@@ -78,6 +78,14 @@ A three-way source-only experiment compared stock re-SPIRV, direct `OpBranch` lo
 
 **Disposition:** There are now two independent switch defects: the dangling borrowed selector after full resolution, and the parser's unconditional reliance on any integer `OpConstant`. Both tested repairs address both defects. A final switch design should consider exact DCE accounting, CFG simplicity, output SPIR-V quality, compiler latency, and broader semantic tests. No production change or upstream patch selected.
 
+## Expanded structured-CFG Phi differential campaign (2026-10-16)
+
+[Completed Vulkan stress workflow](https://github.com/thomthehound/LoxFX/actions/runs/38960224065) independently generated eight new GLSL control-flow families: sibling nested merges, nested early returns, continue/break loops, switches within conditional arms, coalesced switch labels, nested loops, multiple helper functions, and switches within loops. Across `-O0`, `-O`, `-Os`, optional O0 inlining, and four specialization sets, it attempted **128 configurations**.
+
+All **128/128** compiled to valid input SPIR-V, all **128/128** optimized with and without final Phi cleanup, and all **128/128** produced byte-identical, validated optimized output. **128 executable Vulkan comparisons** of optimized output against the original module passed. There were **zero** pass-dependent differences, invalid outputs, unsupported cases, or execution mismatches.
+
+These are additional cases beyond the earlier 128-configuration semantic campaign; they increase confidence in the current optimizer but are not a proof for all structured CFGs. [Source](respv_phi_stress_campaign.py) remains exclusively on the draft diagnostic branch.
+
 ## Unresolved questions and next experiments
 
 1. **Prove or falsify the modern Phi scheduling invariant.** Construct validated shaders with a predecessor terminator scheduled after a dependent `OpPhi`; exercise pruned switch edges, duplicate targets, nested selections, loops, backedges, continue/merge combinations, Phi chains, multi-function and inlining. Instrument final-pass mutations and compare generated CFG/operands with the actual predecessor sets. For valid cases, compare GPU results, not only `spirv-val`.
