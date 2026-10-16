@@ -148,11 +148,12 @@ jobs:
           cp build/godot/shaders/loxfx_integration.spv "$proof/shaders/"
           cp build/godot/shaders/loxfx_follower_publish.spv "$proof/shaders/"
           printf 'config_version=5\n\n[application]\nconfig/name="LoxFX Renderer Owned Compute"\n\n[rendering]\nrenderer/rendering_method="forward_plus"\n' > "$proof/project.godot"
-          # Command-line explicitly overrides the minimal project's default.
+          # A normal Forward+ rendering viewport owns the GPU device; never
+          # use --headless here, which selects the dummy RenderingServer.
           engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
           test -n "$engine"
           timeout 150s xvfb-run -a "$engine" --path "$proof" \
-            --rendering-driver vulkan --rendering-method gl_compatibility \
+            --rendering-driver vulkan --rendering-method forward_plus \
             --script res://renderer_owned_compute.gd
 
       - name: Verify real LoxFX scene inside Godauldron's generic host
