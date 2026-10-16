@@ -216,6 +216,94 @@ OpFunctionEnd
     return path
 
 
+
+def make_nested_phi_prune(outdir, chain_length, folded_condition_true):
+    """Structured selections with a live Phi merge and one pruned incoming edge.
+
+    Unlike the original ordering stress, the Phi's merge block stays live
+    even when the predecessor's direct edge disappears.
+    """
+    name = f"nested_phi_prune_{chain_length}_{int(folded_condition_true)}"
+    lines = [
+        "OpCapability Shader",
+        "OpMemoryModel Logical GLSL450",
+        'OpEntryPoint GLCompute %main "main" %out %gid',
+        "OpExecutionMode %main LocalSize 1 1 1",
+        "OpDecorate %out DescriptorSet 0",
+        "OpDecorate %out Binding 0",
+        "OpDecorate %Out Block",
+        "OpMemberDecorate %Out 0 Offset 0",
+        "OpDecorate %gid BuiltIn GlobalInvocationId",
+        "%void = OpTypeVoid",
+        "%function = OpTypeFunction %void",
+        "%bool = OpTypeBool",
+        "%int = OpTypeInt 32 1",
+        "%uint = OpTypeInt 32 0",
+        "%float = OpTypeFloat 32",
+        "%uvec3 = OpTypeVector %uint 3",
+        "%ptrInput = OpTypePointer Input %uvec3",
+        "%Out = OpTypeStruct %float",
+        "%ptrOut = OpTypePointer StorageBuffer %Out",
+        "%ptrFloat = OpTypePointer StorageBuffer %float",
+        "%gid = OpVariable %ptrInput Input",
+        "%out = OpVariable %ptrOut StorageBuffer",
+        "%zero = OpConstant %int 0",
+        "%one = OpConstant %int 1",
+        "%uzero = OpConstant %uint 0",
+        "%f_one = OpConstant %float 1.0",
+        "%f_two = OpConstant %float 2.0",
+        "%f_three = OpConstant %float 3.0",
+        "%f_four = OpConstant %float 4.0",
+        "%main = OpFunction %void None %function",
+        "%entry = OpLabel",
+        "%loaded_gid = OpLoad %uvec3 %gid",
+        "%idx = OpCompositeExtract %uint %loaded_gid 0",
+        "%dynamic = OpIEqual %bool %idx %uzero",
+        "OpSelectionMerge %outer None",
+        "OpBranchConditional %dynamic %B %C",
+        "%B = OpLabel",
+    ]
+    prev = "%one"
+    for i in range(chain_length):
+        new = f"%sum{i}"
+        lines.append(f"{new} = OpIAdd %int {prev} %one")
+        prev = new
+    # sum > 0, so result is always true for >0; vary direct edge retained.
+    if folded_condition_true:
+        lines.append(f"%folded = OpINotEqual %bool {prev} %zero")
+    else:
+        lines.append(f"%folded = OpIEqual %bool {prev} %zero")
+    lines.extend((
+        "OpSelectionMerge %join None",
+        "OpBranchConditional %folded %join %X",
+        "%X = OpLabel",
+        "OpBranch %join",
+        "%join = OpLabel",
+        "%innerphi = OpPhi %float %f_one %B %f_two %X",
+        "OpBranch %outer",
+        "%C = OpLabel",
+        "OpBranch %outer",
+        "%outer = OpLabel",
+        "%outerphi = OpPhi %float %innerphi %join %f_three %C",
+        "%storage = OpAccessChain %ptrFloat %out %zero",
+        "OpStore %storage %outerphi",
+        "OpReturn",
+        "OpFunctionEnd",
+    ))
+    asm = outdir / (name + ".spvasm")
+    spv = outdir / (name + ".spv")
+    asm.write_text("\n".join(lines) + "\n")
+    assembled = exec_cmd("spirv-as", "--target-env", "vulkan1.2", asm, "-o", spv)
+    if assembled.returncode:
+        print(f"NESTED_ASSEMBLY_FAIL {name}: {assembled.stderr[:700]}", flush=True)
+        return None
+    validated = exec_cmd("spirv-val", "--target-env", "vulkan1.2", spv)
+    if validated.returncode:
+        print(f"NESTED_VALIDATION_FAIL {name}: {validated.stderr[:700]}", flush=True)
+        return None
+    return spv
+
+
 def inspect(path):
     result = exec_cmd("spirv-val", "--target-env", "vulkan1.2", path)
     if result.returncode:
@@ -250,6 +338,11 @@ def main():
     stress = make_phi_order_stress(work / "shaders")
     if stress is not None:
         inputs.append(stress)
+    for depth in (0, 2, 16, 64, 128):
+        for truth in (False, True):
+            case = make_nested_phi_prune(work / "shaders", depth, truth)
+            if case is not None:
+                inputs.append(case)
     inputs.extend(a.loxfx)
     results = []
     changes = []
