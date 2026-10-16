@@ -25,7 +25,7 @@ def require(cmd, name):
 ASSEMBLY = """OpCapability Shader
 OpMemoryModel Logical GLSL450
 OpEntryPoint GLCompute %main "main" %out %gid
-OpExecutionMode %main LocalSize 1 1 1
+OpExecutionMode %main LocalSize 8 1 1
 OpDecorate %gid BuiltIn GlobalInvocationId
 OpDecorate %out DescriptorSet 0
 OpDecorate %out Binding 0
