@@ -110,6 +110,15 @@ int main(int argc,char** argv) {
         // diagnostic submission. The two transfer batches share a single
         // caller-owned command buffer and one caller-owned completion fence.
         const auto uploads_before=context.gpu_submission_count();
+        auto unrecorded=context.prepare_upload(*a);
+        bool premature_finish_rejected=false;
+        try {
+            (void)std::move(unrecorded).finish_after_completion();
+        } catch (const std::logic_error&) {
+            premature_finish_rejected=true;
+        }
+        check(premature_finish_rejected,
+              "Vulkan allowed finalizing an unrecorded upload");
         auto staged_a=context.prepare_upload(*a);
         auto staged_b=context.prepare_upload(*b);
         check(context.gpu_submission_count()==uploads_before,
