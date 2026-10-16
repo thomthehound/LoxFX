@@ -11,7 +11,7 @@ import json
 import statistics
 
 from respv_semantic_campaign import SPECS, checked
-from respv_switch_selector_audit import make_fix, keep_original_selector
+from respv_switch_selector_audit import make_fix, keep_original_selector, remove_unused_switch_constant_scan
 
 # The first two controls exercise the known-invalid original O0 reduction.
 # The rest cover unaffected and normally valid specialization workloads.
@@ -57,7 +57,9 @@ def main():
 
     baseline = (upstream / "re-spirv.cpp").read_text()
     variants = {"current": baseline, "switch-as-branch": make_fix(baseline),
-                "keep-original-selector": keep_original_selector(baseline)}
+                "keep-original-selector": keep_original_selector(baseline),
+                "no-synthetic-selector-scan": remove_unused_switch_constant_scan(
+                    keep_original_selector(baseline))}
     executables = {}
     for name, source in variants.items():
         source_file = work / (name + ".cpp")
