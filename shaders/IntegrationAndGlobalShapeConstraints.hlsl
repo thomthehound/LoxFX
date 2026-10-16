@@ -60,19 +60,6 @@ LOXFX_BINDING(2) StructuredBuffer<float4> rest_positions : register(t2, space0);
 // needed by CalculateStrandLevelData. Do not allocate follower history.
 LOXFX_BINDING(3) RWStructuredBuffer<float4> root_previous_previous : register(u3, space0);
 
-// Godot 4.7's re-SPIRV optimizer currently emits an invalid forward ID for
-// this DXC integration module. A shader with a genuine specialization input
-// is kept unmodified by Godot when no specialization override is supplied.
-// A default of 1.0 preserves the reference simulation clock exactly.
-// This is ONLY compiled for Godot renderer-owned shaders; native Vulkan and
-// D3D12 retain their original un-specialized code and pipelines.
-#ifdef LOXFX_GODOT_RENDERER
-[[vk::constant_id(0)]] const float loxfx_renderer_time_scale = 1.0f;
-#define LOXFX_STEP_SECONDS (params.time_step * loxfx_renderer_time_scale)
-#else
-#define LOXFX_STEP_SECONDS (params.time_step)
-#endif
-
 [numthreads(64, 1, 1)]
 void IntegrationAndGlobalShapeConstraints(
     uint local_id : SV_GroupIndex, uint3 group_id : SV_GroupID) {
@@ -93,7 +80,7 @@ void IntegrationAndGlobalShapeConstraints(
                        params.root_translation_z);
     float4 next = current;
     if (current.w > 0.0f) {
-        float decay = exp(-params.damping * LOXFX_STEP_SECONDS * 60.0f);
+        float decay = exp(-params.damping * params.time_step * 60.0f);
         next.xyz = current.xyz + decay * (current.xyz - previous.xyz)
             + float3(0.0f, -params.gravity, 0.0f)
                 * (LOXFX_STEP_SECONDS * LOXFX_STEP_SECONDS);
