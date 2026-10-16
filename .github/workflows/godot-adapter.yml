@@ -145,8 +145,10 @@ jobs:
           proof=build/godot-renderer-proof
           mkdir -p "$proof/shaders"
           cp adapters/godot/tests/renderer_owned_compute.gd "$proof/"
-          cp build/godot/shaders/loxfx_integration.spv "$proof/shaders/"
-          cp build/godot/shaders/loxfx_follower_publish.spv "$proof/shaders/"
+          # RenderingDevice expects the module entrypoint to be "main";
+          # the independent native Vulkan test keeps the authored names.
+          cp build/godot/shaders/godot/loxfx_integration.spv "$proof/shaders/"
+          cp build/godot/shaders/godot/loxfx_follower_publish.spv "$proof/shaders/"
           printf 'config_version=5\n\n[application]\nconfig/name="LoxFX Renderer Owned Compute"\n\n[rendering]\nrenderer/rendering_method="forward_plus"\n' > "$proof/project.godot"
           # A normal Forward+ rendering viewport owns the GPU device; never
           # use --headless here, which selects the dummy RenderingServer.
