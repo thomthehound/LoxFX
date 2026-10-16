@@ -84,9 +84,13 @@ now has an opt-in **SDK-owned native Vulkan/D3D12 diagnostic simulation
 path**: genuine source-ordered GPU compute stages run in a native standalone
 context, finish on an SDK-owned queue, and publish their completed output
 through a blocking GPU→CPU→Godot mesh bridge. This is not a production frame
-path. The next gates are renderer-device ownership and GPU resource
+path. A non-invasive Godot renderer **preflight** now reports active
+RenderingDevice availability and adapter metadata while explicitly refusing
+to claim borrowed handles, native queue submission or GPU-resident output.
+The next gates remain renderer-device ownership and GPU resource
 synchronization, real skeletal attachment orientation/contact, high-quality
-strand shading and hardware visual/full-frame performance qualification. See
+strand shading and hardware visual/full-frame performance qualification.
+See [Godot native interop audit](GODOT_RENDERER_INTEROP.md). See
 [Godot adapter integration](../adapters/godot/README.md).
 
 ## Milestones
