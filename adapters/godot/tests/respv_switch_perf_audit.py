@@ -11,7 +11,10 @@ import json
 import statistics
 
 from respv_semantic_campaign import SPECS, checked
-from respv_switch_selector_audit import make_fix, keep_original_selector, remove_unused_switch_constant_scan
+from respv_switch_selector_audit import (
+    make_fix, keep_original_selector, remove_unused_switch_constant_scan,
+    allow_switch_without_integer_constant,
+)
 
 # The first two controls exercise the known-invalid original O0 reduction.
 # The rest cover unaffected and normally valid specialization workloads.
@@ -59,7 +62,7 @@ def main():
     variants = {"current": baseline, "switch-as-branch": make_fix(baseline),
                 "keep-original-selector": keep_original_selector(baseline),
                 "no-synthetic-selector-scan": remove_unused_switch_constant_scan(
-                    keep_original_selector(baseline))}
+                    allow_switch_without_integer_constant(keep_original_selector(baseline)))}
     executables = {}
     for name, source in variants.items():
         source_file = work / (name + ".cpp")
@@ -113,8 +116,12 @@ def main():
         report.append(data)
     (work / "report.json").write_text(json.dumps({
         "baseline": "same upstream plus established loop liveness patch",
-        "variants": ["fully reduced switch to OpBranch",
-                     "retain original OpSwitch selector dependency"],
+        "variants": [
+            "stock switch specialization",
+            "fully reduced switch to OpBranch",
+            "retain original OpSwitch selector dependency",
+            "retain selector and remove obsolete fallback-constant parsing",
+        ],
         "units": "microseconds per operation; positive change_pct means regression",
         "trials_per_case": 5,
         "inner_batches_per_trial": 7,
