@@ -155,6 +155,83 @@ def create_inputs(outdir):
     return shaders
 
 
+def make_phi_order_stress(outdir):
+    """Assemble a two-predecessor merge with a deep, foldable branch.
+
+    The first predecessor's branch can cease to target the Phi block,
+    but that predecessor itself remains reachable. That is the condition
+    where label ordering alone does not establish branch resolution.
+    """
+    program = """
+OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main" %out %gid
+OpExecutionMode %main LocalSize 1 1 1
+OpDecorate %out DescriptorSet 0
+OpDecorate %out Binding 0
+OpDecorate %Out Block
+OpMemberDecorate %Out 0 Offset 0
+OpDecorate %gid BuiltIn GlobalInvocationId
+%void = OpTypeVoid
+%function = OpTypeFunction %void
+%bool = OpTypeBool
+%int = OpTypeInt 32 1
+%uint = OpTypeInt 32 0
+%float = OpTypeFloat 32
+%uvec3 = OpTypeVector %uint 3
+%ptrInput = OpTypePointer Input %uvec3
+%Out = OpTypeStruct %float
+%ptrOut = OpTypePointer StorageBuffer %Out
+%ptrFloat = OpTypePointer StorageBuffer %float
+%gid = OpVariable %ptrInput Input
+%out = OpVariable %ptrOut StorageBuffer
+%zero = OpConstant %int 0
+%one = OpConstant %int 1
+%uzero = OpConstant %uint 0
+%f_one = OpConstant %float 1.0
+%f_two = OpConstant %float 2.0
+%main = OpFunction %void None %function
+%entry = OpLabel
+%loaded_gid = OpLoad %uvec3 %gid
+%idx = OpCompositeExtract %uint %loaded_gid 0
+%dynamic = OpIEqual %bool %idx %uzero
+OpSelectionMerge %merge None
+OpBranchConditional %dynamic %B %C
+%B = OpLabel
+"""
+    previous = "%one"
+    for i in range(64):
+        new = f"%chain{i}"
+        program += f"{new} = OpIAdd %int {previous} %one\\n"
+        previous = new
+    program += f"""%folded_condition = OpINotEqual %bool {previous} %zero
+OpSelectionMerge %merge None
+OpBranchConditional %folded_condition %merge %early_return
+%C = OpLabel
+OpBranch %merge
+%early_return = OpLabel
+OpReturn
+%merge = OpLabel
+%phi = OpPhi %float %f_one %B %f_two %C
+%storage = OpAccessChain %ptrFloat %out %zero
+OpStore %storage %phi
+OpReturn
+OpFunctionEnd
+"""
+    asm = outdir / "phi_order_stress.spvasm"
+    asm.write_text(program)
+    path = outdir / "phi_order_stress.spv"
+    assembly = exec_cmd("spirv-as", "--target-env", "vulkan1.2", asm, "-o", path)
+    if assembly.returncode:
+        print("STRESS ASSEMBLY FAILED", assembly.stderr[:2500])
+        return None
+    checked = exec_cmd("spirv-val", "--target-env", "vulkan1.2", path)
+    if checked.returncode:
+        print("STRESS VALIDATION FAILED", checked.stderr[:2500])
+        return None
+    return path
+
+
 def inspect(path):
     result = exec_cmd("spirv-val", "--target-env", "vulkan1.2", path)
     if result.returncode:
@@ -186,6 +263,9 @@ def main():
         if status.returncode:
             raise RuntimeError(name + " graph probe compile failure: " + status.stderr[-3000:])
     inputs = create_inputs(work / "shaders")
+    stress = make_phi_order_stress(work / "shaders")
+    if stress is not None:
+        inputs.append(stress)
     inputs.extend(a.loxfx)
     results = []
     changes = []
