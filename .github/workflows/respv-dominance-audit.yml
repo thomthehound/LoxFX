@@ -7,6 +7,7 @@ on:
       - '.github/workflows/respv-dominance-audit.yml'
       - 'adapters/godot/tests/respv_bench.cpp'
       - 'adapters/godot/tests/respv_dominance_audit.py'
+      - 'adapters/godot/tests/respv_dominance_gpu.py'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,7 @@ jobs:
       - name: Install SPIR-V compiler and tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y spirv-tools glslc libvulkan-dev
+          sudo apt-get install -y spirv-tools glslc libvulkan-dev mesa-vulkan-drivers
       - name: Install official DXC
         shell: bash
         run: |
@@ -59,6 +60,13 @@ jobs:
             --work build/dom-evidence \
             --loxfx build/dom-loxfx/shaders/godot/loxfx_integration.spv \
                     build/dom-loxfx/shaders/godot/loxfx_follower_publish.spv
+      - name: Execute dominance counterexample and corrected outputs on Vulkan
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_dominance_gpu.py \
+            --work build/dom-evidence \
+            --oracle adapters/godot/tests/respv_vulkan_oracle.cpp \
+            --result build/dom-evidence/dominance_gpu.json
       - name: Preserve disassembly and comparative timings
         if: always()
         uses: actions/upload-artifact@v4
@@ -66,6 +74,7 @@ jobs:
           name: respv-dominance-evidence
           path: |
             build/dom-evidence/dominance.json
+            build/dom-evidence/dominance_gpu.json
             build/dom-evidence/shaders/*.spvasm
             build/dom-evidence/outputs/**/*.spv
           if-no-files-found: warn
