@@ -369,7 +369,7 @@ def disasm(path):
 def evaluate(probes, shaders, work, iterations):
     records = []
     for shader in shaders:
-        entry = {"source": shader.name, "outputs": {}, "times_us": {}}
+        entry = {"source": shader.name, "outputs": {}, "times_us": {}, "parse_run_us": {}}
         original_text = disasm(shader)
         for name in ("baseline", "same_block_only", "exact_reachability", "precomputed_domtree"):
             target = work / "outputs" / name / shader.name
@@ -397,6 +397,9 @@ def evaluate(probes, shaders, work, iterations):
                     ))[:125]
             b = require((probes[(name, "bench")], shader, str(iterations)), f"benchmark {name} {shader.name}")
             entry["times_us"][name] = float(b.stdout.strip())
+            total = require((probes[(name, "bench")], shader, str(max(100, iterations // 2)), "parse-run"),
+                            f"parse-run benchmark {name} {shader.name}")
+            entry["parse_run_us"][name] = float(total.stdout.strip())
         entry["source_loads"] = original_text.count("OpLoad")
         records.append(entry)
         print(json.dumps(entry), flush=True)
@@ -417,6 +420,21 @@ def main():
     paths = source_variants(work / "shaders")
     tools = compile_tools(upstream, a.probe.resolve(), a.bench.resolve(), work)
     records = evaluate(tools, paths + a.loxfx, work, a.iterations)
+    by_name = {rec["source"]: rec for rec in records}
+    # Assertions describe observable semantics, not merely whether SPIR-V validates.
+    for name in ("right_store.spv", "entry_store.spv"):
+        record = by_name[name]
+        if any(not record["outputs"][variant]["valid"] for variant in
+               ("baseline", "same_block_only", "exact_reachability", "precomputed_domtree")):
+            raise AssertionError(f"Invalid SPIR-V in {name}: {record['outputs']}")
+    right = by_name["right_store.spv"]
+    entry = by_name["entry_store.spv"]
+    if not right["differ_precomputed_domtree"]:
+        raise AssertionError("Dominator tree failed to prevent unsafe cross-branch forwarding")
+    if entry["differ_precomputed_domtree"]:
+        raise AssertionError("Dominator tree unexpectedly prevented a valid forwarding")
+    if not right["differ_exact_reachability"]:
+        raise AssertionError("Reference reachability check did not identify the unsafe forwarding")
     (work / "dominance.json").write_text(json.dumps(records, indent=2) + "\n")
 
 
