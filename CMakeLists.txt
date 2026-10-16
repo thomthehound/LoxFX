@@ -195,6 +195,39 @@ if(LOXFX_BUILD_VULKAN_SMOKE)
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/UpdateFollowHairVertices.hlsl"
     VERBATIM)
   add_custom_target(loxfx_follower_shader DEPENDS "${LOXFX_FOLLOW_SPV}")
+  # Godot 4.7's RenderingDevice hardcodes the SPIR-V compute entrypoint
+  # "main". The independent native Vulkan backend instead uses the authored
+  # HLSL function names. Build separate artifacts from IDENTICAL source,
+  # never rename the source or break native shader pipeline creation.
+  if(LOXFX_BUILD_GODOT_ADAPTER)
+    set(LOXFX_GODOT_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders/godot")
+    set(LOXFX_GODOT_INTEGRATION_SPV
+      "${LOXFX_GODOT_SHADER_DIR}/loxfx_integration.spv")
+    set(LOXFX_GODOT_FOLLOW_SPV
+      "${LOXFX_GODOT_SHADER_DIR}/loxfx_follower_publish.spv")
+    add_custom_command(
+      OUTPUT "${LOXFX_GODOT_INTEGRATION_SPV}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${LOXFX_GODOT_SHADER_DIR}"
+      COMMAND "${LOXFX_DXC_EXECUTABLE}" -spirv -T cs_6_6
+        -E IntegrationAndGlobalShapeConstraints -DLOXFX_SPIRV=1
+        -fspv-target-env=vulkan1.2 -fspv-entrypoint-name=main
+        -Fo "${LOXFX_GODOT_INTEGRATION_SPV}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/IntegrationAndGlobalShapeConstraints.hlsl"
+      VERBATIM)
+    add_custom_command(
+      OUTPUT "${LOXFX_GODOT_FOLLOW_SPV}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${LOXFX_GODOT_SHADER_DIR}"
+      COMMAND "${LOXFX_DXC_EXECUTABLE}" -spirv -T cs_6_6
+        -E UpdateFollowHairVertices -DLOXFX_SPIRV=1
+        -fspv-target-env=vulkan1.2 -fspv-entrypoint-name=main
+        -Fo "${LOXFX_GODOT_FOLLOW_SPV}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/UpdateFollowHairVertices.hlsl"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/UpdateFollowHairVertices.hlsl"
+      VERBATIM)
+    add_custom_target(loxfx_godot_renderer_shaders
+      DEPENDS "${LOXFX_GODOT_INTEGRATION_SPV}" "${LOXFX_GODOT_FOLLOW_SPV}")
+  endif()
   add_library(loxfx_vulkan_smoke STATIC src/vulkan/smoke_context.cpp)
   add_dependencies(loxfx_vulkan_smoke loxfx_integration_shader
     loxfx_strand_shader loxfx_velocity_shock_shader loxfx_local_shape_shader
@@ -327,6 +360,9 @@ endif()
 # No backend library or internal header is exported to ordinary SDK consumers.
 if(LOXFX_BUILD_GODOT_ADAPTER)
   add_subdirectory(adapters/godot)
+  if(TARGET loxfx_godot_renderer_shaders)
+    add_dependencies(loxfx_godot loxfx_godot_renderer_shaders)
+  endif()
   configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/adapters/godot/loxfx.gdextension.in"
     "${CMAKE_CURRENT_BINARY_DIR}/loxfx.gdextension" @ONLY)
