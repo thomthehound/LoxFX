@@ -756,6 +756,140 @@ def compile_tools(upstream, probe, bench, work):
         call, "optimizerDoesInstructionDominate(rContext, storeInstruction, loadInstruction)"
     )
     variants["adaptive_domtree"] = lazy_code
+    # Exact lazy dominance using contiguous bitsets instead of a tree.
+    # Dominance data is computed only for nonforest CFGs where many
+    # distinct store blocks would otherwise trigger repeated graph walks.
+    bits_helper = """    static bool optimizerBuildBitsetDominators(OptimizerContext &ctx) {
+        const Shader &shader = ctx.shader;
+        const uint32_t n = uint32_t(shader.blocks.size());
+        const uint32_t stride = (n + 63U) / 64U;
+        if (!n) return false;
+        const uint32_t *words = shader.inlinedSpirvWords.empty()
+            ? shader.extSpirvWords : shader.inlinedSpirvWords.data();
+        std::vector<std::vector<uint32_t>> successors(n), predecessors(n);
+        for (uint32_t b = 0; b < n; ++b) {
+            const uint32_t ti = shader.blocks[b].terminatorInstructionIndex;
+            const uint32_t wi = shader.instructions[ti].wordIndex;
+            const SpvOp op = SpvOp(words[wi] & 0xFFFFU);
+            const uint32_t count = words[wi] >> 16U;
+            uint32_t start, labels, labelStride;
+            if (!SpvHasLabels(op, start, labels, labelStride, false)) continue;
+            for (uint32_t k = 0; k < labels && start + k*labelStride < count; ++k) {
+                const uint32_t id = words[wi + start + k*labelStride];
+                if (id >= shader.results.size()) return false;
+                const uint32_t labelIndex = shader.results[id].instructionIndex;
+                if (labelIndex == UINT32_MAX) return false;
+                const uint32_t dest = shader.instructions[labelIndex].blockIndex;
+                if (dest >= n) return false;
+                successors[b].push_back(dest);
+                predecessors[dest].push_back(b);
+            }
+        }
+        std::vector<uint8_t> reached(n, 0), roots(n, 0);
+        std::vector<uint32_t> order;
+        order.reserve(n);
+        struct Frame { uint32_t block, next; };
+        std::vector<Frame> frames;
+        for (const auto &function : shader.functions) {
+            const uint32_t root = shader.instructions[function.labelInstructionIndex].blockIndex;
+            if (root >= n) return false;
+            roots[root] = 1;
+            if (reached[root]) continue;
+            std::vector<uint32_t> postorder;
+            frames.clear();
+            frames.push_back({root, 0});
+            reached[root] = 1;
+            while (!frames.empty()) {
+                Frame &f = frames.back();
+                if (f.next < successors[f.block].size()) {
+                    const uint32_t next = successors[f.block][f.next++];
+                    if (!reached[next]) {
+                        reached[next] = 1;
+                        frames.push_back({next, 0});
+                    }
+                } else {
+                    postorder.push_back(f.block);
+                    frames.pop_back();
+                }
+            }
+            std::reverse(postorder.begin(), postorder.end());
+            order.insert(order.end(), postorder.begin(), postorder.end());
+        }
+        ctx.domStride = stride;
+        ctx.domBits.assign(size_t(n) * stride, UINT64_MAX);
+        for (uint32_t b = 0; b < n; ++b) {
+            if (!reached[b]) {
+                std::fill_n(ctx.domBits.data() + size_t(b)*stride, stride, 0ULL);
+            } else if (roots[b]) {
+                auto *row = ctx.domBits.data() + size_t(b)*stride;
+                std::fill_n(row, stride, 0ULL);
+                row[b / 64] = uint64_t(1) << (b % 64);
+            }
+        }
+        std::vector<uint64_t> scratch(stride);
+        for (uint32_t iteration = 0; iteration <= n; ++iteration) {
+            bool changed = false;
+            for (uint32_t b : order) {
+                if (roots[b]) continue;
+                bool first = true;
+                for (uint32_t predecessor : predecessors[b]) {
+                    if (!reached[predecessor]) continue;
+                    const uint64_t *source = ctx.domBits.data() + size_t(predecessor)*stride;
+                    if (first) {
+                        std::copy_n(source, stride, scratch.data());
+                        first = false;
+                    } else {
+                        for (uint32_t w = 0; w < stride; ++w) scratch[w] &= source[w];
+                    }
+                }
+                if (first) std::fill(scratch.begin(), scratch.end(), 0ULL);
+                scratch[b / 64] |= uint64_t(1) << (b % 64);
+                uint64_t *target = ctx.domBits.data() + size_t(b)*stride;
+                for (uint32_t w = 0; w < stride; ++w) {
+                    if (target[w] != scratch[w]) {
+                        target[w] = scratch[w];
+                        changed = true;
+                    }
+                }
+            }
+            if (!changed) {
+                ctx.domBitsReady = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+"""
+    bitset = adaptive
+    bitset_anchor = """        if (ctx.cfgIsForest) return true;
+        // Fast repeated-store path does not construct CFG metadata."""
+    # Preserve the cached and corridor routes for small CFGs, but bypass
+    # their repeated graph traversals in large CFGs with joins.
+    if bitset_anchor not in bitset:
+        raise RuntimeError("Forest/bitset insertion anchor changed")
+    bitset_logic = """        if (ctx.cfgIsForest) return true;
+        if (shader.blocks.size() >= 32) {
+            if (!ctx.domBitsReady && !optimizerBuildBitsetDominators(ctx))
+                return false;
+            const uint32_t a = store.blockIndex, b = load.blockIndex;
+            return (ctx.domBits[size_t(b)*ctx.domStride + a/64] &
+                    (uint64_t(1) << (a%64))) != 0;
+        }
+        // Fast repeated-store path does not construct CFG metadata."""
+    bitset = bitset.replace(bitset_anchor, bitset_logic)
+    bit_fields = fields + """        std::vector<uint64_t> domBits;
+        uint32_t domStride = 0;
+        bool domBitsReady = false;
+"""
+    bit_code = code[:start] + lazy_helper + forest_helper + predecessor_helper + bits_helper + bitset + code[end:]
+    bit_code = bit_code.replace(context_marker,
+                                "        Options options;\n" + bit_fields + "    };\n")
+    if bit_code.count(call) != 1:
+        raise RuntimeError("Cannot find adaptive bitset dominance invocation")
+    bit_code = bit_code.replace(
+        call, "optimizerDoesInstructionDominate(rContext, storeInstruction, loadInstruction)")
+    variants["adaptive_bitset"] = bit_code
     tools = {}
     for name, cpp in variants.items():
         folder = work / "variants" / name
@@ -783,7 +917,7 @@ def evaluate(probes, shaders, work, iterations):
     for shader in shaders:
         entry = {"source": shader.name, "outputs": {}, "times_us": {}, "parse_run_us": {}}
         original_text = disasm(shader)
-        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "cached_without_final_phi", "baseline_without_final_phi", "precomputed_domtree", "adaptive_domtree"):
+        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "cached_without_final_phi", "baseline_without_final_phi", "precomputed_domtree", "adaptive_domtree", "adaptive_bitset"):
             target = work / "outputs" / name / shader.name
             target.parent.mkdir(parents=True, exist_ok=True)
             p = run(probes[(name, "probe")], shader, target)
@@ -855,13 +989,14 @@ def main():
         filtered = work / "outputs" / "filtered_exact" / filename
         cached = work / "outputs" / "cached_filtered_exact" / filename
         adaptive = work / "outputs" / "adaptive_domtree" / filename
-        if (exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes() or exact.read_bytes() != adaptive.read_bytes()):
+        bitset = work / "outputs" / "adaptive_bitset" / filename
+        if (exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes() or exact.read_bytes() != adaptive.read_bytes() or exact.read_bytes() != bitset.read_bytes()):
             raise AssertionError(f"Filtered/cached dominance diverged from oracle: {filename}")
     # Assertions describe observable semantics, not merely whether SPIR-V validates.
     for name in ("right_store.spv", "entry_store.spv"):
         record = by_name[name]
         if any(not record["outputs"][variant]["valid"] for variant in
-               ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree", "adaptive_domtree")):
+               ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree", "adaptive_domtree", "adaptive_bitset")):
             raise AssertionError(f"Invalid SPIR-V in {name}: {record['outputs']}")
     right = by_name["right_store.spv"]
     entry = by_name["entry_store.spv"]
