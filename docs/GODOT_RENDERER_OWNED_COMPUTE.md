@@ -63,8 +63,10 @@ GDExtension build. It has a strict normal-mode gate. If the normal run
 fails, a debug-mode run is retained **only as a diagnostic control**;
 it cannot turn the check green.
 
-**Current status: PR #28 remains draft and this proof is blocked under
-stock Godot 4.7.2.** Correct remediation requires fixing or safely bypassing
+**Current status: [PR #28](https://github.com/thomthehound/LoxFX/pull/28)
+remains draft and this proof is blocked under stock Godot 4.7.2.**
+Tracked as [LoxFX issue #29](https://github.com/thomthehound/LoxFX/issues/29)
+with a standalone reproducible CI job and upstream source references. Correct remediation requires fixing or safely bypassing
 the re-SPIRV transformation in a supported Godot renderer integration
 surface, not inventing a device, altering the reference hair dynamics,
 requiring a global debug mode, or marking the test passed.
