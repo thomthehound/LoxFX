@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: Godot patched re-SPIRV renderer proof
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/respv-patched-godot.yml'
+      - 'adapters/godot/tests/respv-phi-dependencies.patch'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patched-forward-plus:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Godot build and software Vulkan dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y scons pkg-config libx11-dev libxcursor-dev \
+            libxinerama-dev libxi-dev libxrandr-dev libxext-dev libxkbcommon-dev \
+            libudev-dev libasound2-dev libpulse-dev libgl1-mesa-dev \
+            libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers \
+            xvfb xauth spirv-tools
+      - name: Install official DXC
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dxc"
+          curl --fail --location --retry 3 \
+            https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP/dxc"
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/dxc/lib" >> "$GITHUB_ENV"
+      - name: Compile the existing LoxFX shader modules
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/patched-engine-shaders \
+            -DLOXFX_BUILD_GODOT_RENDERER_PROOF=ON \
+            -DLOXFX_BUILD_TOOLS=OFF -DBUILD_TESTING=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/patched-engine-shaders \
+            --target loxfx_godot_renderer_shaders --parallel 2
+          for shader in build/patched-engine-shaders/shaders/godot/*.spv; do
+            spirv-val --target-env vulkan1.2 "$shader"
+          done
+      - name: Build Godot 4.7.2 with corrected Phi back-edge accounting
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch 4.7.2-stable \
+            https://github.com/godotengine/godot.git build/godot-patched-src
+          git -C build/godot-patched-src apply --check \
+            --directory=thirdparty/re-spirv \
+            "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
+          git -C build/godot-patched-src apply \
+            --directory=thirdparty/re-spirv \
+            "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
+          scons -C build/godot-patched-src platform=linuxbsd \
+            target=template_release tools=no -j 4
+      - name: Execute both LoxFX compute stages on patched Godot
+        run: |
+          set -euo pipefail
+          proof=build/patched-godot-proof
+          mkdir -p "$proof/shaders"
+          cp adapters/godot/tests/renderer_owned_compute.gd "$proof/"
+          cp build/patched-engine-shaders/shaders/godot/*.spv "$proof/shaders/"
+          printf 'config_version=5\n\n[application]\nconfig/name="LoxFX Patched Renderer Compute"\n\n[rendering]\nrenderer/rendering_method="forward_plus"\n' > "$proof/project.godot"
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
+          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          engine="$(find build/godot-patched-src/bin -maxdepth 1 -type f -name 'godot.linuxbsd.template_release*' -print -quit)"
+          test -n "$engine"
+          timeout 120s xvfb-run -a "$engine" --path "$proof" \
+            --rendering-driver vulkan --rendering-method forward_plus \
+            --audio-driver Dummy --script res://renderer_owned_compute.gd
+          echo "PASS: patched Godot renderer-owned numerical acceptance"
