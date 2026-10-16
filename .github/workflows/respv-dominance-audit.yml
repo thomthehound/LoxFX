@@ -8,6 +8,7 @@ on:
       - 'adapters/godot/tests/respv_bench.cpp'
       - 'adapters/godot/tests/respv_dominance_audit.py'
       - 'adapters/godot/tests/respv_dominance_gpu.py'
+      - 'adapters/godot/tests/respv_combined_campaign.py'
   workflow_dispatch:
 
 permissions:
@@ -67,6 +68,19 @@ jobs:
             --work build/dom-evidence \
             --oracle adapters/godot/tests/respv_vulkan_oracle.cpp \
             --result build/dom-evidence/dominance_gpu.json
+      - name: Cross-check combined dominance, switch and Phi corrections with Vulkan
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_combined_campaign.py \
+            --upstream build/dom-upstream \
+            --dominance-evidence build/dom-evidence \
+            --work build/dom-evidence/combined \
+            --probe adapters/godot/tests/respv_semantic_probe.cpp \
+            --bench adapters/godot/tests/respv_switch_bench.cpp \
+            --plain-bench adapters/godot/tests/respv_bench.cpp \
+            --oracle adapters/godot/tests/respv_vulkan_oracle.cpp \
+            --loxfx build/dom-loxfx/shaders/godot/loxfx_integration.spv \
+                    build/dom-loxfx/shaders/godot/loxfx_follower_publish.spv
       - name: Preserve disassembly and comparative timings
         if: always()
         uses: actions/upload-artifact@v4
@@ -75,6 +89,8 @@ jobs:
           path: |
             build/dom-evidence/dominance.json
             build/dom-evidence/dominance_gpu.json
+            build/dom-evidence/combined/report.json
+            build/dom-evidence/combined/inputs/*.comp
             build/dom-evidence/shaders/*.spvasm
             build/dom-evidence/outputs/**/*.spv
           if-no-files-found: warn
