@@ -1,0 +1,83 @@
+diff --git a/re-spirv.cpp b/re-spirv.cpp
+--- a/re-spirv.cpp
++++ b/re-spirv.cpp
+@@ -771,8 +771,9 @@
+         instructions.clear();
+         instructionAdjacentListIndices.clear();
+         instructionInDegrees.clear();
+-        instructionOutDegrees.clear();
+-        instructionOrder.clear();
++        instructionOutDegrees.clear();
++        phiBackEdgeResultIndices.clear();
++        instructionOrder.clear();
+         blocks.clear();
+         blockPreOrderIndices.clear();
+         blockPostOrderIndices.clear();
+@@ -1970,11 +1971,8 @@
+                         return false;
+                     }
+                     
+-                    // Make sure this label doesn't come from the loop continue.
+-                    if (labelId == continueLabelId) {
+-                        continue;
+-                    }
+-
++                    // Phi back-edges must not introduce cycles into the sort graph.
++                    // Their operand uses are counted separately for dead-code elimination.
+                     uint32_t operandId = dataWords[wordIndex + j];
+                     if (operandId >= results.size()) {
+                         fprintf(stderr, "SPIR-V Parsing error. Invalid Operand ID: %u.\n", operandId);
+@@ -1986,9 +1984,13 @@
+                         return false;
+                     }
+ 
+-                    uint32_t labelIndex = results[labelId].instructionIndex;
+-                    uint32_t resultIndex = results[operandId].instructionIndex;
+-                    instructionAdjacentListIndices[labelIndex] = addToList(i, instructionAdjacentListIndices[labelIndex], listNodes);
++                    uint32_t labelIndex = results[labelId].instructionIndex;
++                    uint32_t resultIndex = results[operandId].instructionIndex;
++                    if (labelId == continueLabelId) {
++                        phiBackEdgeResultIndices.push_back(resultIndex);
++                        continue;
++                    }
++                    instructionAdjacentListIndices[labelIndex] = addToList(i, instructionAdjacentListIndices[labelIndex], listNodes);
+                     instructionAdjacentListIndices[resultIndex] = addToList(i, instructionAdjacentListIndices[resultIndex], listNodes);
+                 }
+             }
+@@ -2134,11 +2136,17 @@
+                 const ListNode &listNode = listNodes[listIndex];
+                 instructionInDegrees[listNode.instructionIndex]++;
+                 instructionOutDegrees[i]++;
+-                listIndex = listNode.nextListIndex;
+-            }
+-        }
+-
+-        // Sort degrees doesn't need to be cleared as its contents will be copied over.
++                listIndex = listNode.nextListIndex;
++            }
++        }
++
++        // Cyclic Phi dependencies are excluded from the topological sort,
++        // but each use must still contribute to the DCE reference count.
++        for (uint32_t resultIndex : phiBackEdgeResultIndices) {
++            instructionOutDegrees[resultIndex]++;
++        }
++
++        // Sort degrees doesn't need to be cleared as its contents will be copied over.
+         thread_local std::vector<uint32_t> sortDegrees;
+         thread_local std::vector<uint32_t> instructionStack;
+         thread_local std::vector<InstructionSort> instructionSortVector;
+
+diff --git a/re-spirv.h b/re-spirv.h
+--- a/re-spirv.h
++++ b/re-spirv.h
+@@ -173,7 +173,8 @@
+         std::vector<Instruction> instructions;
+         std::vector<uint32_t> instructionAdjacentListIndices;
+         std::vector<uint32_t> instructionInDegrees;
+-        std::vector<uint32_t> instructionOutDegrees;
++        std::vector<uint32_t> instructionOutDegrees;
++        std::vector<uint32_t> phiBackEdgeResultIndices;
+         std::vector<uint32_t> instructionOrder;
+         std::vector<Block> blocks;
+         std::vector<uint32_t> blockPreOrderIndices;
