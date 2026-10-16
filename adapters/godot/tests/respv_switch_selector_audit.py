@@ -85,6 +85,61 @@ def keep_original_selector(src):
     return src[:start] + section + src[end:]
 
 
+def allow_switch_without_integer_constant(src):
+    """The two research variants never need the legacy synthetic selector."""
+    old = """        if (foundOpSwitch && (defaultSwitchOpConstantInt == UINT32_MAX)) {
+            fprintf(stderr, "Unable to find an OpConstantInt to use as replacement for switches. Adding this instruction automatically is not supported yet.\\n");
+            return false;
+        }"""
+    if src.count(old) != 1:
+        raise RuntimeError("Legacy fallback-constant parse guard changed")
+    return src.replace(old, "")
+
+
+def make_switch_without_integer_constant(folder):
+    """A valid SPIR-V OpSwitch using an OpSpecConstant but no OpConstantInt."""
+    assembly = """OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main" %out
+OpExecutionMode %main LocalSize 8 1 1
+OpDecorate %out DescriptorSet 0
+OpDecorate %out Binding 0
+OpDecorate %Out Block
+OpMemberDecorate %Out 0 Offset 0
+OpDecorate %selector SpecId 2
+%void = OpTypeVoid
+%int = OpTypeInt 32 1
+%func = OpTypeFunction %void
+%Out = OpTypeStruct %int
+%ptrOut = OpTypePointer StorageBuffer %Out
+%out = OpVariable %ptrOut StorageBuffer
+%selector = OpSpecConstant %int 0
+%main = OpFunction %void None %func
+%entry = OpLabel
+OpSelectionMerge %merge None
+OpSwitch %selector %default 0 %case0 1 %case1
+%case0 = OpLabel
+OpBranch %merge
+%case1 = OpLabel
+OpBranch %merge
+%default = OpLabel
+OpBranch %merge
+%merge = OpLabel
+%result = OpCompositeConstruct %Out %selector
+OpStore %out %result
+OpReturn
+OpFunctionEnd
+"""
+    source = folder / "switch_no_int_constant.spvasm"
+    binary = folder / "switch_no_int_constant.spv"
+    source.write_text(assembly)
+    checked(["spirv-as", "--target-env", "vulkan1.2", source, "-o", binary],
+            "assemble no-integer-constant switch")
+    checked(["spirv-val", "--target-env", "vulkan1.2", binary],
+            "validate no-integer-constant switch")
+    return binary
+
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--upstream",required=True,type=Path)
@@ -95,8 +150,9 @@ def main():
     a=p.parse_args()
     upstream=a.upstream.resolve()
     original=(upstream/"re-spirv.cpp").read_text()
-    variants={"current":original,"switch-as-branch":make_fix(original),
-              "keep-original-selector":keep_original_selector(original)}
+    variants={"current":original,
+              "switch-as-branch":allow_switch_without_integer_constant(make_fix(original)),
+              "keep-original-selector":allow_switch_without_integer_constant(keep_original_selector(original))}
     a.work.mkdir(parents=True,exist_ok=True)
     compiled={}
     for name,source in variants.items():
@@ -136,6 +192,31 @@ def main():
                             repaired+=1
                     print("SWITCH_AUDIT:",json.dumps(record),flush=True)
                     cases.append(record)
+    # The baseline parser requires an unrelated OpConstantInt even when
+    # every switch selector is itself a valid OpSpecConstant. Neither research
+    # candidate needs that borrowed constant; exercise this structural case.
+    minimal = make_switch_without_integer_constant(a.work)
+    no_constant_cases = []
+    for spec in SPECS:
+        args = sum(([str(id), str(value)] for id, value in sorted(spec.items())), [])
+        expected = checked([a.driver.resolve(), minimal, *args],
+                           "original no-constant GPU", lavapipe_env()).strip()
+        record = {"shader": minimal.name, "spec": spec, "variants": {}}
+        for name, exe in compiled.items():
+            output = a.work / (name + "-no-constant-" + str(spec[2]) + ".spv")
+            process = run([exe, minimal, output, 0, *args])
+            entry = {"processed": process.returncode == 0,
+                     "error": process.stderr[-500:]}
+            if entry["processed"]:
+                val = run(["spirv-val", "--target-env", "vulkan1.2", output])
+                entry["valid"] = val.returncode == 0
+                entry["validation_error"] = val.stderr[-500:]
+                if entry["valid"]:
+                    gpu = run([a.driver.resolve(), output], lavapipe_env())
+                    entry["gpu_ok"] = gpu.returncode == 0 and gpu.stdout.strip() == expected
+            record["variants"][name] = entry
+        no_constant_cases.append(record)
+        print("NO_CONSTANT_SWITCH:", json.dumps(record), flush=True)
     known_invalid = [
         c for c in cases if c["variants"]["current"].get("valid") is False
     ]
@@ -155,11 +236,21 @@ def main():
     summary={"cases":len(cases),"invalid_current":len(known_invalid),
              "repaired_by_variant":repaired_by_variant,
              "remaining_invalid":remaining,
-             "unexpected_invalid_cases":len(expected_invalid)}
-    (a.work/"report.json").write_text(json.dumps({"summary":summary,"cases":cases},indent=2)+"\n")
+             "unexpected_invalid_cases":len(expected_invalid),
+             "no_integer_constant_cases":len(no_constant_cases),
+             "no_integer_constant_repaired":{
+                 name:sum(c["variants"][name].get("gpu_ok",False) for c in no_constant_cases)
+                 for name in ("switch-as-branch","keep-original-selector")
+             }}
+    (a.work/"report.json").write_text(json.dumps({"summary":summary,"cases":cases,
+                                                "no_constant_cases":no_constant_cases},indent=2)+"\n")
     print("SWITCH_AUDIT_SUMMARY:",json.dumps(summary),flush=True)
     if (len(known_invalid) != 6 or expected_invalid or any(remaining.values())
-            or any(n != 6 for n in repaired_by_variant.values())):
+            or any(n != 6 for n in repaired_by_variant.values())
+            or len(no_constant_cases) != len(SPECS)
+            or any(c["variants"]["current"]["processed"] for c in no_constant_cases)
+            or any(n != len(SPECS)
+                   for n in summary["no_integer_constant_repaired"].values())):
         raise SystemExit("Switch-selector experimental variants failed acceptance")
 
 if __name__=="__main__":main()
