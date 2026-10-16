@@ -51,13 +51,32 @@ def main():
         )
         if compile_result.returncode:
             raise RuntimeError(f"Historical build failed {variant}: {compile_result.stderr[-3500:]}")
+    # The 2024 parser miscounts null-terminated OpEntryPoint names whose
+    # lengths are multiples of four ("main" is four characters). Rename
+    # only the entry-point string to "entry" (five characters): this is
+    # semantically inert and works around an unrelated historical parser bug.
+    # The same normalized SPIR-V is submitted to both old optimizer variants.
+    legacy_inputs = work / "legacy-inputs"
+    legacy_inputs.mkdir(parents=True, exist_ok=True)
     report = []
     for src in a.inputs:
         for src in sorted(src.parent.glob("nested_phi_prune_*.spv")) if src.name == "phi_order_stress.spv" else [src]:
-            record = {"input": src.name, "variants": {}}
+            dis = run("spirv-dis", "--raw-id", src.resolve())
+            if dis.returncode:
+                print("HISTORICAL_DIS_FAIL:", src.name, dis.stderr[:200])
+                continue
+            assembly = dis.stdout.replace('"main"', '"entry"')
+            normalized = legacy_inputs / src.name
+            asmfile = legacy_inputs / (src.name + ".spvasm")
+            asmfile.write_text(assembly)
+            normalized_result = run("spirv-as", "--target-env", "vulkan1.2", asmfile, "-o", normalized)
+            if normalized_result.returncode:
+                print("HISTORICAL_NORMALIZE_FAIL:", src.name, normalized_result.stderr[:300])
+                continue
+            record = {"input": src.name, "variants": {}, "entry_point_renamed": '"main"' in dis.stdout}
             for variant in variants:
                 target = work / variant / (src.name + ".out.spv")
-                result = run(work / variant / "probe", src.resolve(), target)
+                result = run(work / variant / "probe", normalized, target)
                 if result.returncode:
                     record["variants"][variant] = {
                         "ran": False, "code": result.returncode, "error": result.stderr.strip()[-700:],
