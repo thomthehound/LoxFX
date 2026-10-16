@@ -47,7 +47,10 @@ func _begin() -> void:
 
 func _cleanup_renderer() -> void:
     if _rd != null:
-        for rid in _rids:
+        # Pipelines and descriptor sets depend on shaders and buffers.
+        # Release in inverse creation order after both GPU readbacks.
+        for index in range(_rids.size() - 1, -1, -1):
+            var rid: RID = _rids[index]
             if rid.is_valid():
                 _rd.free_rid(rid)
     _rids.clear()
