@@ -237,7 +237,7 @@ def compile_tools(upstream, probe, bench, work):
     # No extra work during parsing, and no repeated DFS for many variables
     # stored in the same basic block.
     cache_field = "        std::unordered_map<uint32_t, std::vector<uint8_t>> reachabilityWithoutStore;\n"
-    context_marker = "    struct OptimizerContext {\n"
+    context_marker = "        Options options;\n    };\n"
     if code.count(context_marker) != 1:
         raise RuntimeError("Cannot find optimizer context for cache")
     cached = filtered.replace(
@@ -269,7 +269,7 @@ def compile_tools(upstream, probe, bench, work):
         return !bypass;"""
     )
     variant_code = code[:start] + cached + code[end:]
-    variant_code = variant_code.replace(context_marker, context_marker + cache_field)
+    variant_code = variant_code.replace(context_marker, "        Options options;\n" + cache_field + "    };\n")
     call = "optimizerDoesInstructionDominate(rContext.shader, storeInstruction, loadInstruction)"
     if variant_code.count(call) != 1:
         raise RuntimeError("Expected one dominance call in variable optimization")
