@@ -167,6 +167,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--probe", type=Path, required=True)
+    parser.add_argument("--graph-probe", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--loxfx", type=Path, nargs=2, required=True)
     a = parser.parse_args()
@@ -175,11 +176,31 @@ def main():
     original = (source_dir / "re-spirv.cpp").read_text()
     variants = prepare_variants(original, work / "sources")
     compile_variants(source_dir, variants, work / "bin", a.probe.resolve())
+    for name in ("baseline", "ordered-phi"):
+        status = exec_cmd(
+            "c++", "-std=c++17", "-O2", "-I" + str(source_dir),
+            "-I" + str(source_dir / "external/SPIRV-Headers/include"),
+            work / "sources" / name / "re-spirv.cpp",
+            a.graph_probe.resolve(), "-o", work / "bin" / (name + "-graph")
+        )
+        if status.returncode:
+            raise RuntimeError(name + " graph probe compile failure: " + status.stderr[-3000:])
     inputs = create_inputs(work / "shaders")
     inputs.extend(a.loxfx)
     results = []
     changes = []
+    order_probes = []
     for path in inputs:
+        graph = {"shader": path.name}
+        for name in ("baseline", "ordered-phi"):
+            proc = exec_cmd(work / "bin" / (name + "-graph"), path)
+            graph[name] = {
+                "ok": proc.returncode == 0,
+                "late": len(re.findall(r"^LATE_PHI_PREDECESSOR", proc.stdout, flags=re.M)),
+                "details": proc.stdout.splitlines()[:30],
+                "error": proc.stderr[-350:],
+            }
+        order_probes.append(graph)
         for spec_id, spec_value in ((None, None), (0, 0), (0, 1), (1, 0), (1, 1)):
             tag = f"{path.stem}.spec{spec_id}-{spec_value}" if spec_id is not None else path.stem + ".nospec"
             record = {"shader": path.name, "spec_id": spec_id, "value": spec_value, "variants": {}}
@@ -214,7 +235,14 @@ def main():
         }
     print("COUNTS:", json.dumps(counts))
     print("CASES THAT DIFFER WITHOUT FINAL PHI:", json.dumps(changes[:50]))
-    (work / "summary.json").write_text(json.dumps({"counts": counts, "late_phi_cases": changes}, indent=2) + "\n")
+    print("PHI ORDERING:", json.dumps([
+        {"shader": entry["shader"], "baseline_late": entry["baseline"]["late"],
+         "ordered_late": entry["ordered-phi"]["late"]}
+        for entry in order_probes if entry["baseline"]["late"]
+    ]))
+    (work / "summary.json").write_text(json.dumps({
+        "counts": counts, "late_phi_cases": changes, "ordering": order_probes,
+    }, indent=2) + "\n")
 
 
 if __name__ == "__main__":
