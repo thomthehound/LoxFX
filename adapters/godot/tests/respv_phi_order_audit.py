@@ -156,63 +156,47 @@ def create_inputs(outdir):
 
 
 def make_phi_order_stress(outdir):
-    """Assemble a two-predecessor merge with a deep, foldable branch.
+    """Legal structured selection with a Phi depending on the header label.
 
-    The first predecessor's branch can cease to target the Phi block,
-    but that predecessor itself remains reachable. That is the condition
-    where label ordering alone does not establish branch resolution.
+    The condition is deliberately deep but constant-evaluable *by re-SPIRV*
+    so the incoming block's terminator may be processed after its Phi.
     """
     program = """
 OpCapability Shader
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %main "main" %out %gid
+OpEntryPoint GLCompute %main "main" %out
 OpExecutionMode %main LocalSize 1 1 1
 OpDecorate %out DescriptorSet 0
 OpDecorate %out Binding 0
 OpDecorate %Out Block
 OpMemberDecorate %Out 0 Offset 0
-OpDecorate %gid BuiltIn GlobalInvocationId
 %void = OpTypeVoid
 %function = OpTypeFunction %void
 %bool = OpTypeBool
 %int = OpTypeInt 32 1
-%uint = OpTypeInt 32 0
 %float = OpTypeFloat 32
-%uvec3 = OpTypeVector %uint 3
-%ptrInput = OpTypePointer Input %uvec3
 %Out = OpTypeStruct %float
 %ptrOut = OpTypePointer StorageBuffer %Out
 %ptrFloat = OpTypePointer StorageBuffer %float
-%gid = OpVariable %ptrInput Input
 %out = OpVariable %ptrOut StorageBuffer
 %zero = OpConstant %int 0
 %one = OpConstant %int 1
-%uzero = OpConstant %uint 0
 %f_one = OpConstant %float 1.0
-%f_two = OpConstant %float 2.0
 %main = OpFunction %void None %function
 %entry = OpLabel
-%loaded_gid = OpLoad %uvec3 %gid
-%idx = OpCompositeExtract %uint %loaded_gid 0
-%dynamic = OpIEqual %bool %idx %uzero
-OpSelectionMerge %merge None
-OpBranchConditional %dynamic %B %C
-%B = OpLabel
 """
     previous = "%one"
     for i in range(64):
         new = f"%chain{i}"
-        program += f"{new} = OpIAdd %int {previous} %one\n"
+        program += f"{new} = OpIAdd %int {previous} %one\\n"
         previous = new
-    program += f"""%folded_condition = OpINotEqual %bool {previous} %zero
+    program += f"""%folded_condition = OpIEqual %bool {previous} %zero
 OpSelectionMerge %merge None
 OpBranchConditional %folded_condition %merge %early_return
-%C = OpLabel
-OpBranch %merge
 %early_return = OpLabel
 OpReturn
 %merge = OpLabel
-%phi = OpPhi %float %f_one %B %f_two %C
+%phi = OpPhi %float %f_one %entry
 %storage = OpAccessChain %ptrFloat %out %zero
 OpStore %storage %phi
 OpReturn
