@@ -535,7 +535,7 @@ def compile_tools(upstream, probe, bench, work):
     lazy_helper = lazy_helper.replace("blockDomPreOrderIndices", "ctx.domPre")
     lazy_helper = lazy_helper.replace("blockDomPostOrderIndices", "ctx.domPost")
     for field in ("blocks", "instructions", "results", "functions"):
-        lazy_helper = re.sub(r"(?<![.\\w])" + field + r"\\b", "shader." + field, lazy_helper)
+        lazy_helper = re.sub(r"(?<![.\w])" + field + r"\b", "shader." + field, lazy_helper)
     if ("bool Shader::buildDominatorTree" in lazy_helper or
             "ctx.domPre.assign" not in lazy_helper):
         raise RuntimeError("Lazy dominator source transformation incomplete")
@@ -574,7 +574,7 @@ def compile_tools(upstream, probe, bench, work):
         bool lazyDomReady = false;
 """
     lazy_code = code[:start] + lazy_helper + adaptive + code[end:]
-    lazy_code = lazy_code.replace(context_marker, "        Options options;\\n" + fields + "    };\\n")
+    lazy_code = lazy_code.replace(context_marker, "        Options options;\n" + fields + "    };\n")
     if lazy_code.count(call) != 1:
         raise RuntimeError("Cannot find adaptive dominance call site")
     lazy_code = lazy_code.replace(
