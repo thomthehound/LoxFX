@@ -90,7 +90,12 @@ to claim borrowed handles, native queue submission or GPU-resident output.
 The native Vulkan/D3D12 backends now have a source-ordered six-stage
 `record_frame` that can append multiple independent grooms to a
 caller-owned command buffer/list with no implicit GPU submission or readback.
-See [native frame recording](NATIVE_FRAME_RECORDING.md). The next gates
+The native backends now also expose staged groom upload/initialization:
+allocation and CPU packing, recording into a caller-owned GPU command batch,
+and host-confirmed completion before reclaiming staging. The legacy blocking
+prepare calls remain diagnostic conveniences. See [host-owned groom
+upload](HOST_OWNED_GROOM_UPLOAD.md) and
+[native frame recording](NATIVE_FRAME_RECORDING.md). The next gates
 remain renderer-device ownership and GPU resource
 synchronization, real skeletal attachment orientation/contact, high-quality
 strand shading and hardware visual/full-frame performance qualification.
