@@ -13,6 +13,8 @@ on:
       - 'adapters/godot/tests/respv_phi_era_bisect.py'
       - 'adapters/godot/tests/respv_phi_2024_probe.cpp'
       - 'adapters/godot/tests/respv_phi_order_audit.py'
+      - 'adapters/godot/tests/respv_phi_conditional_cleanup.py'
+      - 'adapters/godot/tests/respv_phi_gate_flags.cpp'
   workflow_dispatch:
 
 permissions:
@@ -127,6 +129,20 @@ jobs:
             --benchmark adapters/godot/tests/respv_bench.cpp \
             --loxfx build/phi-audit-loxfx/shaders/godot/loxfx_integration.spv \
                     build/phi-audit-loxfx/shaders/godot/loxfx_follower_publish.spv
+      - name: Compare conservative schedule-gated Phi cleanup against unconditional alternatives
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_phi_conditional_cleanup.py \
+            --upstream build/phi-audit-upstream \
+            --work build/phi-audit-evidence/conditional-cleanup \
+            --bench adapters/godot/tests/respv_bench.cpp \
+            --probe adapters/godot/tests/respv_phi_probe.cpp \
+            --flags adapters/godot/tests/respv_phi_gate_flags.cpp \
+            --loxfx build/phi-audit-loxfx/shaders/godot/loxfx_integration.spv \
+                    build/phi-audit-loxfx/shaders/godot/loxfx_follower_publish.spv \
+            --adversarial build/phi-audit-evidence/shaders/phi_order_stress.spv \
+                          build/phi-audit-evidence/shaders/nested_phi_prune_64_0.spv \
+                          build/phi-audit-evidence/shaders/nested_phi_prune_64_1.spv
       - name: Preserve audit outputs
         if: always()
         uses: actions/upload-artifact@v4
@@ -134,6 +150,7 @@ jobs:
           name: respv-phi-order-audit
           path: |
             build/phi-audit-evidence/eras/eras.json
+            build/phi-audit-evidence/conditional-cleanup/report.json
             build/phi-audit-evidence/patch-interaction/interaction.json
             build/phi-audit-evidence/archaeology/historical.json
             build/phi-audit-evidence/pass-cost/results.json
