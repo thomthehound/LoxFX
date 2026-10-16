@@ -143,6 +143,60 @@ def make_many_load_stress(work, block_count=32, variable_count=64):
     return path
 
 
+def make_distinct_store_blocks(work, variable_count):
+    """Worst-case candidate distribution for the per-store-block reachability cache.
+
+    The existing many_loads control has numerous loads sharing one store block.
+    This one places every dominating store in a *different* CFG block.
+    """
+    path = work / f"many_distinct_stores_{variable_count}.spv"
+    text = [
+        "OpCapability Shader",
+        "OpMemoryModel Logical GLSL450",
+        'OpEntryPoint GLCompute %main "main" %out',
+        "OpExecutionMode %main LocalSize 1 1 1",
+        "OpDecorate %out DescriptorSet 0",
+        "OpDecorate %out Binding 0",
+        "OpDecorate %Out Block",
+        "OpMemberDecorate %Out 0 Offset 0",
+        "%void = OpTypeVoid",
+        "%func = OpTypeFunction %void",
+        "%int = OpTypeInt 32 1",
+        "%Out = OpTypeStruct %int",
+        "%ptrOut = OpTypePointer StorageBuffer %Out",
+        "%ptrStorage = OpTypePointer StorageBuffer %int",
+        "%ptrLocal = OpTypePointer Function %int",
+        "%out = OpVariable %ptrOut StorageBuffer",
+        "%zero = OpConstant %int 0",
+        "%initial = OpConstant %int 7",
+        "%replacement = OpConstant %int 11",
+        "%main = OpFunction %void None %func",
+        "%entry = OpLabel",
+    ]
+    for k in range(variable_count):
+        text.append(f"%v{k} = OpVariable %ptrLocal Function %initial")
+    text.append("OpBranch %s0")
+    for k in range(variable_count):
+        text.extend((f"%s{k} = OpLabel",
+                     f"OpStore %v{k} %replacement",
+                     f"OpBranch %s{k+1}" if k+1 < variable_count else "OpBranch %loads"))
+    text.append("%loads = OpLabel")
+    accumulator = "%zero"
+    for k in range(variable_count):
+        text.extend((f"%l{k} = OpLoad %int %v{k}",
+                     f"%sum{k} = OpIAdd %int {accumulator} %l{k}"))
+        accumulator = f"%sum{k}"
+    text.extend(("%dest = OpAccessChain %ptrStorage %out %zero",
+                 f"OpStore %dest {accumulator}", "OpReturn", "OpFunctionEnd"))
+    asm = work / f"many_distinct_stores_{variable_count}.spvasm"
+    asm.write_text("\n".join(text) + "\n")
+    require(("spirv-as", "--target-env", "vulkan1.2", asm, "-o", path),
+            "assemble distributed-store stress")
+    require(("spirv-val", "--target-env", "vulkan1.2", path),
+            "validate distributed-store stress")
+    return path
+
+
 def compile_tools(upstream, probe, bench, work):
     code = (upstream / "re-spirv.cpp").read_text()
     original = """            return (aPreIndex < bPreIndex) && (aPostIndex > bPostIndex);"""
@@ -539,6 +593,7 @@ def main():
     upstream = a.upstream.resolve()
     paths = source_variants(work / "shaders")
     paths.append(make_many_load_stress(work / "shaders"))
+    paths.extend(make_distinct_store_blocks(work / "shaders", n) for n in (32, 128))
     from respv_phi_pass_bench import build_phi_flood
     paths.extend(build_phi_flood(work / "shaders", n) for n in (16, 64, 128))
     tools = compile_tools(upstream, a.probe.resolve(), a.bench.resolve(), work)
