@@ -20,6 +20,27 @@ func _run() -> void:
         return
     root.add_child(instance)
 
+    # This project explicitly uses Godot's Compatibility renderer.
+    # A native SDK diagnostic device is not the Godot graphics device,
+    # irrespective of whether another rendering backend is available.
+    var renderer: Dictionary = instance.get_renderer_interop_status()
+    if not renderer.has("renderer_device_available"):
+        _fail("Renderer interoperability preflight is missing")
+        return
+    if (bool(renderer.get("native_handles_borrowed", true))
+            or bool(renderer.get("device_shared_with_renderer", true))
+            or bool(renderer.get("gpu_resident_publication", true))
+            or bool(renderer.get("native_queue_submission_permitted", true))
+            or bool(renderer.get("synchronization_verified", true))):
+        _fail("Interop preflight claims an unsupported GPU ownership mode")
+        return
+    if bool(renderer.get("renderer_device_available", false))             and String(renderer.get("status", "")) != "renderer_present_not_negotiated":
+        _fail("Interop incorrectly accepts the Godot rendering queue")
+        return
+    if not bool(renderer.get("renderer_device_available", false))             and String(renderer.get("status", "")) != "renderer_unavailable":
+        _fail("Missing Godot RenderingDevice was not reported accurately")
+        return
+
     var source: PackedByteArray = FileAccess.get_file_as_bytes(
         "res://grooms/Ratboy_mohawk.tfx")
     if source.is_empty():
@@ -69,6 +90,11 @@ func _run() -> void:
             return
         if instance.get_native_diagnostic_context_count() != 1:
             _fail("First groom must create exactly one native context")
+            return
+        renderer = instance.get_renderer_interop_status()
+        if (not bool(renderer.get("diagnostic_gpu_active", false))
+                or bool(renderer.get("device_shared_with_renderer", true))):
+            _fail("SDK-owned native simulation was confused with renderer interop")
             return
         if (not instance.is_native_diagnostic_active()
                 or not instance.get_native_diagnostic_backend().contains("Vulkan")):
