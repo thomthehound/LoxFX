@@ -60,7 +60,7 @@ jobs:
             --directory=thirdparty/re-spirv \
             "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
           scons -C build/godot-patched-src platform=linuxbsd \
-            target=template_release tools=no -j 4
+            target=template_release tools=no disable_path_overrides=no -j 4
       - name: Execute both LoxFX compute stages on patched Godot
         run: |
           set -euo pipefail
