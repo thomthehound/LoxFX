@@ -48,11 +48,13 @@ submission and CPU transfer.
 - Native `record_frame` calls are ordered and may be interleaved between
   different grooms using the same compatible context. The host controls queue
   ordering, submission, frame fences, presentation and lifetime.
-- The existing `prepare()`/`prepare_diagnostic()` still initializes groom
-  buffers via an internally submitted synchronous diagnostic upload. This is
-  **not yet** safe to call against an arbitrary engine-owned queue without
-  validating renderer ownership and scheduling. The new recorder only solves
-  the frame-**recording** boundary, not engine-hosted allocation and upload.
+- Groom initialization now supports `prepare_upload()` resource/staging
+  creation, `record_initial_upload()` into a caller-owned command buffer/list,
+  and explicit pending-transaction completion **after the host GPU fence**.
+  Legacy `prepare()`/`prepare_diagnostic()` remain blocking test helpers.
+  See [host-owned groom upload](HOST_OWNED_GROOM_UPLOAD.md). Godot's actual
+  render-thread device and queue ownership/synchronization is still an
+  independent unfinished step.
 - If input validation fails after commands have been appended, abandon and
   reset the host command recording rather than submitting a partial frame.
   The stage-specific validation and failure contracts remain unchanged.
