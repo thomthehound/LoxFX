@@ -49,6 +49,26 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// Staged, not yet submitted groom initialization. Owns upload staging AND
+// the per-groom destination buffers until the caller has submitted and
+// externally waited/signaled completion. Finalization must happen AFTER
+// that completion. Neither staging nor its destination buffers may be
+// destroyed while referenced by in-flight GPU work.
+class PendingGroomUpload {
+public:
+    ~PendingGroomUpload();
+    PendingGroomUpload(PendingGroomUpload&&) noexcept;
+    PendingGroomUpload& operator=(PendingGroomUpload&&) noexcept;
+    PendingGroomUpload(const PendingGroomUpload&) = delete;
+    PendingGroomUpload& operator=(const PendingGroomUpload&) = delete;
+    [[nodiscard]] GroomState finish_after_completion() &&;
+private:
+    friend class DeviceContext;
+    struct Impl;
+    explicit PendingGroomUpload(std::unique_ptr<Impl>) noexcept;
+    std::unique_ptr<Impl> impl_;
+};
+
 // The device context owns invariant pipeline/descriptor infrastructure.
 // Several grooms share ONE context. record_integration() only records
 // commands; queue submission is explicitly owned by caller/test harness.
@@ -64,6 +84,13 @@ public:
     DeviceContext(const DeviceContext&) = delete;
     DeviceContext& operator=(const DeviceContext&) = delete;
 
+    // Host-controlled initial upload: allocation/packing without any
+    // queue submission, then record transfers into a caller-owned buffer.
+    // Keep PendingGroomUpload alive through the host's completion fence.
+    [[nodiscard]] PendingGroomUpload prepare_upload(const PreparedGroom& source);
+    void record_initial_upload(VkCommandBuffer command_buffer,
+                               PendingGroomUpload& upload) const;
+    // Existing blocking preparation remains DIAGNOSTIC-only.
     [[nodiscard]] GroomState prepare(const PreparedGroom& source);
     // Records all six source-ordered stages into a CALLER-owned command buffer.
     // Does not begin/end, submit, wait, read back or allocate frame commands.
