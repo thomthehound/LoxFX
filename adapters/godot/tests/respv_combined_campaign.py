@@ -17,7 +17,8 @@ from pathlib import Path
 from respv_semantic_campaign import HEADER, TAIL, SPECS, SHAPES, checked, run, lavapipe_env
 from respv_phi_stress_campaign import SHAPES as ADVERSARIAL
 from respv_phi_pass_bench import build_phi_flood
-from respv_switch_selector_audit import keep_original_selector, allow_switch_without_integer_constant
+from respv_switch_selector_audit import (keep_original_selector,
+    allow_switch_without_integer_constant, remove_unused_switch_constant_scan)
 from respv_phi_conditional_cleanup import gated_sources
 
 
@@ -44,6 +45,7 @@ def build(upstream, evidence, probe_source, bench_source, plain_bench_source):
         "structured": (structured, None),
         "gated": (gated, gated_header),
         "selective": (selective, selective_header),
+        "selective_no_scan": (remove_unused_switch_constant_scan(selective), selective_header),
         "without_final": (structured.replace(final_pass, """        if (false && !optimizerCompactPhis(context)) {
             return false;
         }"""), None),
