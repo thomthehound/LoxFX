@@ -234,6 +234,36 @@ OpBranch %s0
     return output
 
 
+def make_multiple_joined_store_blocks(work, variable_count):
+    """Force the corridor proof to stop at a second join and exercise domtree fallback."""
+    make_joined_distinct_store_blocks(work, variable_count)
+    text = (work / f"many_joined_stores_{variable_count}.spvasm").read_text()
+    middle = variable_count // 2
+    branch = f"%s{middle} = OpLabel\\nOpStore %v{middle} %replacement\\nOpBranch %s{middle+1}\\n"
+    replacement = f"""%s{middle} = OpLabel
+OpStore %v{middle} %replacement
+OpSelectionMerge %middle_join None
+OpBranchConditional %always %middle_left %middle_right
+%middle_left = OpLabel
+OpBranch %middle_join
+%middle_right = OpLabel
+OpBranch %middle_join
+%middle_join = OpLabel
+OpBranch %s{middle+1}
+"""
+    if text.count(branch) != 1:
+        raise RuntimeError("Middle store branch topology unexpected")
+    text = text.replace(branch, replacement, 1)
+    asm = work / f"many_two_joins_{variable_count}.spvasm"
+    output = work / f"many_two_joins_{variable_count}.spv"
+    asm.write_text(text)
+    require(("spirv-as", "--target-env", "vulkan1.2", asm, "-o", output),
+            "assemble two-joins stress")
+    require(("spirv-val", "--target-env", "vulkan1.2", output),
+            "validate two-joins stress")
+    return output
+
+
 def compile_tools(upstream, probe, bench, work):
     code = (upstream / "re-spirv.cpp").read_text()
     original = """            return (aPreIndex < bPreIndex) && (aPostIndex > bPostIndex);"""
@@ -790,6 +820,7 @@ def main():
     paths.append(make_many_load_stress(work / "shaders"))
     paths.extend(make_distinct_store_blocks(work / "shaders", n) for n in (32, 128))
     paths.extend(make_joined_distinct_store_blocks(work / "shaders", n) for n in (32, 128))
+    paths.extend(make_multiple_joined_store_blocks(work / "shaders", n) for n in (32, 128))
     from respv_phi_pass_bench import build_phi_flood
     paths.extend(build_phi_flood(work / "shaders", n) for n in (16, 64, 128))
     tools = compile_tools(upstream, a.probe.resolve(), a.bench.resolve(), work)
