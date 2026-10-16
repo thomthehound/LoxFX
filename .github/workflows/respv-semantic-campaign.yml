@@ -9,6 +9,8 @@ on:
       - 'adapters/godot/tests/respv_semantic_probe.cpp'
       - 'adapters/godot/tests/respv_vulkan_oracle.cpp'
       - 'adapters/godot/tests/respv_switch_selector_audit.py'
+      - 'adapters/godot/tests/respv_switch_perf_audit.py'
+      - 'adapters/godot/tests/respv_switch_bench.cpp'
   workflow_dispatch:
 
 permissions:
@@ -49,6 +51,14 @@ jobs:
             --probe adapters/godot/tests/respv_semantic_probe.cpp \
             --driver build/respv-semantic-evidence/vulkan_oracle \
             --work build/respv-semantic-evidence/switch-audit
+      - name: Benchmark original and simplified switch reduction
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_switch_perf_audit.py \
+            --upstream build/respv-semantic-upstream \
+            --input build/respv-semantic-evidence/inputs \
+            --benchmark adapters/godot/tests/respv_switch_bench.cpp \
+            --work build/respv-semantic-evidence/switch-perf
       - name: Preserve semantic outcomes and shader reproducers
         if: always()
         uses: actions/upload-artifact@v4
@@ -56,6 +66,7 @@ jobs:
           name: respv-vulkan-semantic-campaign
           path: |
             build/respv-semantic-evidence/switch-audit/report.json
+            build/respv-semantic-evidence/switch-perf/report.json
             build/respv-semantic-evidence/results.json
             build/respv-semantic-evidence/inputs/*.comp
             build/respv-semantic-evidence/inputs/*.spv
