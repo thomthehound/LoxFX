@@ -96,6 +96,22 @@ def allow_switch_without_integer_constant(src):
     return src.replace(old, "")
 
 
+def remove_unused_switch_constant_scan(src):
+    """Eliminate parser bookkeeping after borrowing fallback constants ends."""
+    obsolete = """                // Check if it's an OpConstant of Int type so it can be reused on switches.
+                if ((opCode == SpvOpConstant) && (defaultSwitchOpConstantInt == UINT32_MAX)) {
+                    uint32_t typeWordIndex = instructions[typeInstructionIndex].wordIndex;
+                    SpvOp typeOpCode = SpvOp(dataWords[typeWordIndex] & 0xFFFFU);
+                    if (typeOpCode == SpvOpTypeInt) {
+                        defaultSwitchOpConstantInt = dataWords[wordIndex + 2];
+                    }
+                }
+"""
+    if src.count(obsolete) != 1:
+        raise RuntimeError("Parser fallback-constant scan changed")
+    return src.replace(obsolete, "")
+
+
 def make_switch_without_integer_constant(folder):
     """A valid SPIR-V OpSwitch using an OpSpecConstant but no OpConstantInt."""
     assembly = """OpCapability Shader
@@ -152,7 +168,9 @@ def main():
     original=(upstream/"re-spirv.cpp").read_text()
     variants={"current":original,
               "switch-as-branch":allow_switch_without_integer_constant(make_fix(original)),
-              "keep-original-selector":allow_switch_without_integer_constant(keep_original_selector(original))}
+              "keep-original-selector":allow_switch_without_integer_constant(keep_original_selector(original)),
+              "no-synthetic-selector-scan":remove_unused_switch_constant_scan(
+                  allow_switch_without_integer_constant(keep_original_selector(original)))}
     a.work.mkdir(parents=True,exist_ok=True)
     compiled={}
     for name,source in variants.items():
@@ -240,7 +258,8 @@ def main():
              "no_integer_constant_cases":len(no_constant_cases),
              "no_integer_constant_repaired":{
                  name:sum(c["variants"][name].get("gpu_ok",False) for c in no_constant_cases)
-                 for name in ("switch-as-branch","keep-original-selector")
+                 for name in ("switch-as-branch","keep-original-selector",
+                              "no-synthetic-selector-scan")
              }}
     (a.work/"report.json").write_text(json.dumps({"summary":summary,"cases":cases,
                                                 "no_constant_cases":no_constant_cases},indent=2)+"\n")
