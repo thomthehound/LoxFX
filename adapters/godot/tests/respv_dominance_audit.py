@@ -183,6 +183,52 @@ def compile_tools(upstream, probe, bench, work):
 """ + filter_anchor)
     variants["filtered_exact"] = code[:start] + filtered + code[end:]
 
+    # Cache reachability for each store block within a single optimizer run.
+    # No extra work during parsing, and no repeated DFS for many variables
+    # stored in the same basic block.
+    cache_field = "        std::unordered_map<uint32_t, std::vector<uint8_t>> reachabilityWithoutStore;\n"
+    context_marker = "    struct OptimizerContext {\n"
+    if code.count(context_marker) != 1:
+        raise RuntimeError("Cannot find optimizer context for cache")
+    cached = filtered.replace(
+        "const Shader &shader, const Instruction &store, const Instruction &load",
+        "OptimizerContext &ctx, const Instruction &store, const Instruction &load"
+    )
+    cached = cached.replace(
+        "        if (store.blockIndex == load.blockIndex) {",
+        "        const Shader &shader = ctx.shader;\n"
+        "        if (store.blockIndex == load.blockIndex) {"
+    )
+    index_anchor = "        const uint32_t storeIndex = uint32_t(&store - shader.instructions.data());"
+    cached = cached.replace(index_anchor, """        const auto found = ctx.reachabilityWithoutStore.find(store.blockIndex);
+        if (found != ctx.reachabilityWithoutStore.end()) {
+            return !found->second[load.blockIndex];
+        }
+""" + index_anchor)
+    cached = cached.replace(
+        """            if (block == load.blockIndex) {
+                return false; // Found path bypassing the candidate store.
+            }
+            seen[block] = 1;""",
+        """            seen[block] = 1;"""
+    )
+    cached = cached.replace(
+        "        return true; // Every path to the load traverses the store block.",
+        """        const bool bypass = seen[load.blockIndex] != 0;
+        ctx.reachabilityWithoutStore.emplace(store.blockIndex, std::move(seen));
+        return !bypass;"""
+    )
+    variant_code = code[:start] + cached + code[end:]
+    variant_code = variant_code.replace(context_marker, context_marker + cache_field)
+    call = "optimizerDoesInstructionDominate(rContext.shader, storeInstruction, loadInstruction)"
+    if variant_code.count(call) != 1:
+        raise RuntimeError("Expected one dominance call in variable optimization")
+    variant_code = variant_code.replace(
+        call, "optimizerDoesInstructionDominate(rContext, storeInstruction, loadInstruction)"
+    )
+    variants["cached_filtered_exact"] = variant_code
+
+
     # Correct, reusable dominance metadata: derive CFG edges from *actual*
     # branch terminators, then construct each function's dominator tree.
     # A dominator-tree Euler interval gives O(1) comparisons per lookup;
@@ -384,7 +430,7 @@ def evaluate(probes, shaders, work, iterations):
     for shader in shaders:
         entry = {"source": shader.name, "outputs": {}, "times_us": {}, "parse_run_us": {}}
         original_text = disasm(shader)
-        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree"):
+        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "precomputed_domtree"):
             target = work / "outputs" / name / shader.name
             target.parent.mkdir(parents=True, exist_ok=True)
             p = run(probes[(name, "probe")], shader, target)
@@ -438,8 +484,9 @@ def main():
         filename = rec["source"]
         exact = work / "outputs" / "exact_reachability" / filename
         filtered = work / "outputs" / "filtered_exact" / filename
-        if exact.read_bytes() != filtered.read_bytes():
-            raise AssertionError(f"DFS negative filter lost a legal dominance case: {filename}")
+        cached = work / "outputs" / "cached_filtered_exact" / filename
+        if exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes():
+            raise AssertionError(f"Filtered/cached dominance diverged from oracle: {filename}")
     # Assertions describe observable semantics, not merely whether SPIR-V validates.
     for name in ("right_store.spv", "entry_store.spv"):
         record = by_name[name]
