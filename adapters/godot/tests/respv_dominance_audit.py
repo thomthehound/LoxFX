@@ -890,6 +890,91 @@ def compile_tools(upstream, probe, bench, work):
     bit_code = bit_code.replace(
         call, "optimizerDoesInstructionDominate(rContext, storeInstruction, loadInstruction)")
     variants["adaptive_bitset"] = bit_code
+    # In structured SPIR-V each reachable SelectionMerge/LoopMerge block
+    # is dominated by its declared header. That fact permits skipping over
+    # merge regions while extending a unique-predecessor corridor backward.
+    # Other joins still fall back to exact bitset dominance.
+    merge_helper = """    static void optimizerPrepareStructuredMerges(OptimizerContext &ctx) {
+        const Shader &shader = ctx.shader;
+        const uint32_t *words = shader.inlinedSpirvWords.empty()
+            ? shader.extSpirvWords : shader.inlinedSpirvWords.data();
+        ctx.mergeHeader.assign(shader.blocks.size(), UINT32_MAX);
+        for (uint32_t b = 0; b < uint32_t(shader.blocks.size()); ++b) {
+            const uint32_t term = shader.blocks[b].terminatorInstructionIndex;
+            if (term == 0) continue;
+            const uint32_t index = shader.instructions[term - 1].wordIndex;
+            const SpvOp op = SpvOp(words[index] & 0xFFFFU);
+            if (op != SpvOpSelectionMerge && op != SpvOpLoopMerge) continue;
+            const uint32_t label = words[index + 1];
+            if (label >= shader.results.size()) continue;
+            const uint32_t labelIndex = shader.results[label].instructionIndex;
+            if (labelIndex == UINT32_MAX) continue;
+            const uint32_t mergeBlock = shader.instructions[labelIndex].blockIndex;
+            if (mergeBlock < ctx.mergeHeader.size())
+                ctx.mergeHeader[mergeBlock] = b;
+        }
+    }
+
+"""
+    struct_anchor = """        if (shader.blocks.size() >= 32) {
+            if (!ctx.domBitsReady && !optimizerBuildBitsetDominators(ctx))
+                return false;
+            const uint32_t a = store.blockIndex, b = load.blockIndex;
+            return (ctx.domBits[size_t(b)*ctx.domStride + a/64] &
+                    (uint64_t(1) << (a%64))) != 0;
+        }"""
+    struct_case = """        if (shader.blocks.size() >= 32) {
+            if (!ctx.predecessorReady) {
+                optimizerPrepareUniquePredecessors(ctx);
+                optimizerPrepareStructuredMerges(ctx);
+            }
+            auto corridor = ctx.corridorForLoad.find(load.blockIndex);
+            if (corridor == ctx.corridorForLoad.end() &&
+                ctx.corridorForLoad.size() < 8) {
+                std::vector<uint8_t> onPath(shader.blocks.size(), 0);
+                uint32_t current = load.blockIndex;
+                while (current < onPath.size() && !onPath[current]) {
+                    onPath[current] = 1;
+                    if (ctx.entryBlock[current]) break;
+                    const uint32_t predecessor = ctx.uniquePredecessor[current];
+                    if (predecessor < onPath.size()) {
+                        current = predecessor;
+                        continue;
+                    }
+                    // A structured header dominates its merge block.
+                    // Never make this inference for an arbitrary CFG join.
+                    const uint32_t header = ctx.mergeHeader[current];
+                    if (header >= onPath.size()) break;
+                    current = header;
+                }
+                corridor = ctx.corridorForLoad.emplace(
+                    load.blockIndex, std::move(onPath)).first;
+            }
+            if (corridor != ctx.corridorForLoad.end() &&
+                corridor->second[store.blockIndex]) {
+                return true;
+            }
+            if (!ctx.domBitsReady && !optimizerBuildBitsetDominators(ctx))
+                return false;
+            const uint32_t a = store.blockIndex, b = load.blockIndex;
+            return (ctx.domBits[size_t(b)*ctx.domStride + a/64] &
+                    (uint64_t(1) << (a%64))) != 0;
+        }"""
+    if bitset.count(struct_anchor) != 1:
+        raise RuntimeError("Large joined CFG bitset anchor changed")
+    structured = bitset.replace(struct_anchor, struct_case)
+    structured_fields = bit_fields + """        std::vector<uint32_t> mergeHeader;
+"""
+    structured_code = (
+        code[:start] + lazy_helper + forest_helper + predecessor_helper +
+        bits_helper + merge_helper + structured + code[end:])
+    structured_code = structured_code.replace(
+        context_marker, "        Options options;\n" + structured_fields + "    };\n")
+    if structured_code.count(call) != 1:
+        raise RuntimeError("Structured corridor dominance call count changed")
+    structured_code = structured_code.replace(
+        call, "optimizerDoesInstructionDominate(rContext, storeInstruction, loadInstruction)")
+    variants["structured_corridor"] = structured_code
     tools = {}
     for name, cpp in variants.items():
         folder = work / "variants" / name
@@ -917,7 +1002,7 @@ def evaluate(probes, shaders, work, iterations):
     for shader in shaders:
         entry = {"source": shader.name, "outputs": {}, "times_us": {}, "parse_run_us": {}}
         original_text = disasm(shader)
-        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "cached_without_final_phi", "baseline_without_final_phi", "precomputed_domtree", "adaptive_domtree", "adaptive_bitset"):
+        for name in ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "cached_filtered_exact", "cached_without_final_phi", "baseline_without_final_phi", "precomputed_domtree", "adaptive_domtree", "adaptive_bitset", "structured_corridor"):
             target = work / "outputs" / name / shader.name
             target.parent.mkdir(parents=True, exist_ok=True)
             p = run(probes[(name, "probe")], shader, target)
@@ -990,13 +1075,14 @@ def main():
         cached = work / "outputs" / "cached_filtered_exact" / filename
         adaptive = work / "outputs" / "adaptive_domtree" / filename
         bitset = work / "outputs" / "adaptive_bitset" / filename
-        if (exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes() or exact.read_bytes() != adaptive.read_bytes() or exact.read_bytes() != bitset.read_bytes()):
+        structured = work / "outputs" / "structured_corridor" / filename
+        if (exact.read_bytes() != filtered.read_bytes() or exact.read_bytes() != cached.read_bytes() or exact.read_bytes() != adaptive.read_bytes() or exact.read_bytes() != bitset.read_bytes() or exact.read_bytes() != structured.read_bytes()):
             raise AssertionError(f"Filtered/cached dominance diverged from oracle: {filename}")
     # Assertions describe observable semantics, not merely whether SPIR-V validates.
     for name in ("right_store.spv", "entry_store.spv"):
         record = by_name[name]
         if any(not record["outputs"][variant]["valid"] for variant in
-               ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree", "adaptive_domtree", "adaptive_bitset")):
+               ("baseline", "same_block_only", "exact_reachability", "filtered_exact", "precomputed_domtree", "adaptive_domtree", "adaptive_bitset", "structured_corridor")):
             raise AssertionError(f"Invalid SPIR-V in {name}: {record['outputs']}")
     right = by_name["right_store.spv"]
     entry = by_name["entry_store.spv"]
