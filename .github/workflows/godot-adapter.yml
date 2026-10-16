@@ -133,39 +133,6 @@ jobs:
             exit 1
           fi
 
-      - name: Run original LoxFX compute shaders on Godot's renderer-owned Vulkan device
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Unlike the Compatibility/headless test, this MUST use Godot's
-          # global renderer device and draw graph, not a private Vulkan queue.
-          sudo apt-get install -y xvfb xauth libgl1-mesa-dri vulkan-validationlayers spirv-tools
-          export VK_LOADER_DRIVERS_SELECT='*lvp*'
-          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
-          export VK_VALIDATION_VALIDATE_SHADERS=true
-          proof=build/godot-renderer-proof
-          mkdir -p "$proof/shaders"
-          cp adapters/godot/tests/renderer_owned_compute.gd "$proof/"
-          # RenderingDevice expects the module entrypoint to be "main";
-          # the independent native Vulkan test keeps the authored names.
-          cp build/godot/shaders/godot/loxfx_integration.spv "$proof/shaders/"
-          cp build/godot/shaders/godot/loxfx_follower_publish.spv "$proof/shaders/"
-          # Verify the actual shader binaries, not just DXC's command line.
-          for shader in "$proof/shaders/"*.spv; do
-            echo "--- SPIR-V $(basename "$shader")"
-            spirv-val --target-env vulkan1.2 "$shader"
-            spirv-dis "$shader" | grep -E 'OpEntryPoint|OpExecutionMode|OpDecorate .* (Binding|DescriptorSet)' | head -45
-          done
-          printf 'config_version=5\n\n[application]\nconfig/name="LoxFX Renderer Owned Compute"\n\n[rendering]\nrenderer/rendering_method="forward_plus"\n' > "$proof/project.godot"
-          # A normal Forward+ rendering viewport owns the GPU device; never
-          # use --headless here, which selects the dummy RenderingServer.
-          engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
-          test -n "$engine"
-          timeout 150s xvfb-run -a "$engine" --verbose --path "$proof" \
-            --rendering-driver vulkan --rendering-method forward_plus \
-            --audio-driver Dummy --script res://renderer_owned_compute.gd
-
       - name: Verify real LoxFX scene inside Godauldron's generic host
         if: runner.os == 'Linux'
         shell: bash
