@@ -681,6 +681,19 @@ def compile_tools(upstream, probe, bench, work):
             return ctx.domPre[a] != UINT32_MAX && ctx.domPre[b] != UINT32_MAX &&
                    ctx.domPre[a] < ctx.domPre[b] && ctx.domPost[a] > ctx.domPost[b];
         }
+        // For larger CFGs with joins, one reusable dominator tree is
+        // cheaper than accumulating distinct full-graph reachability scans.
+        // This is lazy: no extra parse work, and no work on shaders whose
+        // DFS prefilter rejects the dominance candidate.
+        if (shader.blocks.size() >= 32) {
+            if (!optimizerBuildLazyDominatorTree(ctx)) return false;
+            ctx.lazyDomReady = true;
+            ctx.reachabilityWithoutStore.clear();
+            ctx.corridorForLoad.clear();
+            const uint32_t a = store.blockIndex, b = load.blockIndex;
+            return ctx.domPre[a] != UINT32_MAX && ctx.domPre[b] != UINT32_MAX &&
+                   ctx.domPre[a] < ctx.domPre[b] && ctx.domPost[a] > ctx.domPost[b];
+        }
         const auto found = ctx.reachabilityWithoutStore.find(store.blockIndex);
         if (found != ctx.reachabilityWithoutStore.end()) {
             return !found->second[load.blockIndex];
