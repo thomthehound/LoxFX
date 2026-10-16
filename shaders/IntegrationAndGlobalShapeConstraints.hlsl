@@ -79,22 +79,6 @@ void IntegrationAndGlobalShapeConstraints(
                        params.root_translation_y,
                        params.root_translation_z);
     float4 next = current;
-#ifdef LOXFX_GODOT_PREDICATED
-    // Provisional equivalent control-flow lowering for Godot's re-SPIRV
-    // optimizer. It avoids OpPhi state merges that may trigger an invalid
-    // forward-ID emission. The original native shader remains the authority.
-    const float decay = exp(-params.damping * params.time_step * 60.0f);
-    const float3 integrated = current.xyz
-        + decay * (current.xyz - previous.xyz)
-        + float3(0.0f, -params.gravity, 0.0f)
-            * (params.time_step * params.time_step);
-    const float strength =
-        (params.global_stiffness > 0.0f &&
-         (float)local_vertex < params.global_range * (float)params.vertices_per_strand)
-            ? params.global_stiffness : 0.0f;
-    const float3 corrected = integrated + strength * (rest.xyz - integrated);
-    next = (current.w > 0.0f) ? float4(corrected, current.w) : rest;
-#else
     if (current.w > 0.0f) {
         float decay = exp(-params.damping * params.time_step * 60.0f);
         next.xyz = current.xyz + decay * (current.xyz - previous.xyz)
@@ -108,7 +92,6 @@ void IntegrationAndGlobalShapeConstraints(
     } else {
         next = rest; // pinned scalp attachment follows the host translation
     }
-#endif
     // Reference UpdateFinalVertexPositions saves the older previous state
     // before updating it. Only the two guide-root vertices are consumed by
     // the forthcoming strand-level pass.
