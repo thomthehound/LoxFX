@@ -712,11 +712,11 @@ int main(int argc,char** argv) {
         frame_batch.begin();
         const auto before_recording=context.gpu_submission_count();
         loxfx::NativeFrameParameters frame_a{};
-        frame_a.integration.gravity=0.0f;
-        frame_a.integration.root_translation_x=0.25f;
-        frame_a.length_wind.length_iterations=2;
+        frame_a.gravity=0.0f;
+        frame_a.root_translation_x=0.25f;
+        frame_a.length_iterations=2;
         loxfx::NativeFrameParameters frame_b=frame_a;
-        frame_b.integration.root_translation_x=-0.40f;
+        frame_b.root_translation_x=-0.40f;
         context.record_frame(frame_batch.commands,host_a,frame_a);
         context.record_frame(frame_batch.commands,host_b,frame_b);
         check(context.gpu_submission_count()==before_recording,
