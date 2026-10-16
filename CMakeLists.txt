@@ -18,6 +18,20 @@ option(LOXFX_BUILD_VULKAN_SMOKE "Build experimental Vulkan compute smoke test" O
 option(LOXFX_ENABLE_D3D12_SHADERS "Compile the shared integration stage to DXIL" OFF)
 option(LOXFX_BUILD_D3D12_SMOKE "Build internal native D3D12 stage-one test" OFF)
 option(LOXFX_BUILD_GODOT_ADAPTER "Build optional diagnostic Godot GDExtension" OFF)
+option(LOXFX_GODOT_NATIVE_DIAGNOSTIC
+  "Enable experimental SDK-owned native GPU simulation in the Godot adapter" OFF)
+if(LOXFX_GODOT_NATIVE_DIAGNOSTIC)
+  if(NOT LOXFX_BUILD_GODOT_ADAPTER)
+    message(FATAL_ERROR "Native Godot diagnostic simulation needs LOXFX_BUILD_GODOT_ADAPTER")
+  endif()
+  if(WIN32)
+    set(LOXFX_BUILD_D3D12_SMOKE ON)
+  elseif(UNIX AND NOT APPLE)
+    set(LOXFX_BUILD_VULKAN_SMOKE ON)
+  else()
+    message(FATAL_ERROR "Native Godot diagnostic mode currently supports Windows D3D12 or Linux Vulkan")
+  endif()
+endif()
 set(LOXFX_GODOT_CPP_SOURCE_DIR "" CACHE PATH "Existing godot-cpp checkout")
 set(LOXFX_GODOT_COMPATIBILITY_MINIMUM "4.7" CACHE STRING
   "Oldest Godot minor version supported by the selected generated bindings")
@@ -73,15 +87,6 @@ if(BUILD_TESTING)
   add_executable(loxfx_prepared_groom_tests tests/prepared_groom_tests.cpp)
   target_link_libraries(loxfx_prepared_groom_tests PRIVATE LoxFX::Core)
   add_test(NAME loxfx_prepared_groom COMMAND loxfx_prepared_groom_tests)
-endif()
-
-# The game-engine adapter is optional and never changes the installed core
-# target. It cannot depend on Godauldron or the experimental GPU smoke APIs.
-if(LOXFX_BUILD_GODOT_ADAPTER)
-  add_subdirectory(adapters/godot)
-  configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/adapters/godot/loxfx.gdextension.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/loxfx.gdextension" @ONLY)
 endif()
 
 # Public, relocatable CMake package for independently built consumers.
@@ -307,4 +312,14 @@ if(LOXFX_BUILD_D3D12_SMOKE)
     add_test(NAME loxfx_d3d12_integration
       COMMAND loxfx_d3d12_integration_tests "${LOXFX_INTEGRATION_DXIL}" "${LOXFX_STRAND_DXIL}")
   endif()
+endif()
+
+# Adapter must be added after the internal backend targets when its explicitly
+# enabled native diagnostic variant links to the actual LoxFX executors.
+# No backend library or internal header is exported to ordinary SDK consumers.
+if(LOXFX_BUILD_GODOT_ADAPTER)
+  add_subdirectory(adapters/godot)
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/adapters/godot/loxfx.gdextension.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/loxfx.gdextension" @ONLY)
 endif()

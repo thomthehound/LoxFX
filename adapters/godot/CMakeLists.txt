@@ -29,6 +29,17 @@ add_library(loxfx_godot SHARED
   src/entry.cpp
   src/loxfx_groom_3d.cpp)
 target_link_libraries(loxfx_godot PRIVATE LoxFX::Core godot::cpp)
+if(LOXFX_GODOT_NATIVE_DIAGNOSTIC)
+  target_sources(loxfx_godot PRIVATE src/native_diagnostic.cpp)
+  target_compile_definitions(loxfx_godot PRIVATE LOXFX_GODOT_NATIVE_DIAGNOSTIC=1)
+  if(WIN32)
+    target_link_libraries(loxfx_godot PRIVATE loxfx_d3d12_smoke)
+    target_compile_definitions(loxfx_godot PRIVATE LOXFX_GODOT_NATIVE_D3D12=1)
+  else()
+    target_link_libraries(loxfx_godot PRIVATE loxfx_vulkan_smoke)
+    target_compile_definitions(loxfx_godot PRIVATE LOXFX_GODOT_NATIVE_VULKAN=1)
+  endif()
+endif()
 target_compile_features(loxfx_godot PRIVATE cxx_std_23)
 set_target_properties(loxfx_godot PROPERTIES
   OUTPUT_NAME loxfx_godot

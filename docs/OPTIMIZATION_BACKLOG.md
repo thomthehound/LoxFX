@@ -35,6 +35,11 @@ reproducible GPU and correctness evidence, or documented rejection.
 
 **Observation / source:** the initial `adapters/godot/src/loxfx_groom_3d.cpp`
 supports diagnostic packed CPU positions and Godot vertex-buffer updates.
+The optional `LOXFX_GODOT_NATIVE_DIAGNOSTIC` mode now also records LoxFX's
+actual six native compute stages and synchronously snapshots published
+follower positions via its existing diagnostic readback before those line
+vertices are uploaded. This proves a working consumer boundary without
+claiming a production hardware path.
 Its per-frame line-vertex expansion and CPU-to-GPU upload scale with every
 rendered guide and follower. That is an intentional temporary inspection
 path, **not** the eventual native renderer. The existing native Vulkan
@@ -277,6 +282,38 @@ consumer hardware. No early allocator framework before profiling.
 **Acceptance:** reduced measured committed memory or allocation overhead
 without broken transfer fences, ownership, correctness, or slower whole-frame
 throughput. **Status:** blocked until multi-groom runtime and GPU profiling.
+
+## Shared diagnostic devices and multi-groom scheduling (OPT-003/011)
+
+**2026-10-15, PR #24 Codex P1 follow-up:** The first
+`adapters/godot/src/native_diagnostic.cpp` implementation constructed a
+standalone native `DeviceContext` inside every `LoxFXGroom3D` instance.
+With N grooms this repeated device selection, invariant pipeline compilation
+and GPU device/context allocation N times, violating the existing
+device-versus-groom ownership contract.
+
+**Current correction:** compatible native diagnostic grooms now reuse one
+weakly cached device/queue and six-stage pipeline collection, keyed by the
+absolute normalized shader path and D3D12 hardware/WARP preference.
+Each groom retains its own GPU `GroomState`; no implicit adapter migration
+occurs. The diagnostic recording, queue submission and readback are serialized
+across users because the existing diagnostic command allocator/list is
+shared. The last groom releases the device without a permanent GPU cache.
+Two real grooms with different follower populations exercise state isolation,
+independent step/reset and final-device teardown in the Godot runtime smoke.
+
+**Remaining cost:** repeated CPU↔GPU diagnostic readbacks and
+one wait+submission per groom are **not** fixed. Serialized multi-groom
+diagnostics are deliberately non-production; a future host-owned
+batched/asynchronous submission mode must preserve dependencies and
+groom-local histories (OPT-003) and later evaluate allocation reuse
+(OPT-011). No physical-GPU device-memory or timing reduction is claimed.
+
+**Verification needed:** multi-groom Linux Vulkan/Godot smoke,
+Windows D3D12 native build, then real hardware scene-to-frame profiling
+comparing shared contexts with independent diagnostics and future batched
+execution. Correctness is a prerequisite; `OPT-003` and `OPT-011`
+remain blocked for production optimization.
 
 ## Evidence and handoff log
 

@@ -53,6 +53,89 @@ func _run() -> void:
         _fail("Dynamic position update damaged the existing mesh")
         return
 
-    print("PASS: native Godot extension loaded, real TFX groom prepared, ",
-        "and diagnostic strand buffer updated")
+    var expected_shader: String = "res://shaders/loxfx_integration.spv"
+    var native_required: bool = OS.get_cmdline_user_args().has("--native-required")
+    if native_required and not FileAccess.file_exists(expected_shader):
+        _fail("Native diagnostic mode requires compiled Vulkan shader assets")
+        return
+    if native_required:
+        var rest_root: Vector3 = points[0]
+        var contexts_before: int = instance.get_native_diagnostic_context_count()
+        if contexts_before != 0:
+            _fail("Test inherited unexpected native device contexts")
+            return
+        if not instance.start_native_diagnostic(expected_shader):
+            _fail("LoxFX native Vulkan startup failed: " + instance.get_last_error())
+            return
+        if instance.get_native_diagnostic_context_count() != 1:
+            _fail("First groom must create exactly one native context")
+            return
+        if (not instance.is_native_diagnostic_active()
+                or not instance.get_native_diagnostic_backend().contains("Vulkan")):
+            _fail("Native Vulkan diagnostic provider did not initialize")
+            return
+        if not instance.step_native_diagnostic(
+                1.0 / 60.0, 9.81, 0.08, Vector3(0.25, 0.0, 0.0)):
+            _fail("Native LoxFX six-stage step failed: " + instance.get_last_error())
+            return
+        var root_result: Vector3 = instance.get_native_diagnostic_root_position()
+        if (instance.get_native_diagnostic_steps() != 1
+                or absf(root_result.x - rest_root.x - 0.25) > 0.01):
+            _fail("Native compute did not publish translated guide root")
+            return
+        # A second groom must share the DEVICE and pipeline library but own
+        # distinct GPU history. Stepping/resetting the first must not mutate
+        # the second; stopping one must not destroy the other's device.
+        var sibling: Variant = ClassDB.instantiate("LoxFXGroom3D")
+        if sibling == null:
+            _fail("Cannot instantiate second LoxFX groom")
+            return
+        root.add_child(sibling)
+        if not sibling.load_tfx_bytes(source, 1, 0.02, 0.3, 31):
+            _fail("Second groom load failed: " + sibling.get_last_error())
+            return
+        if not sibling.start_native_diagnostic(expected_shader):
+            _fail("Second groom GPU startup failed: " + sibling.get_last_error())
+            return
+        if instance.get_native_diagnostic_context_count() != 1:
+            _fail("Two grooms created duplicate GPU device/pipeline contexts")
+            return
+        if not sibling.step_native_diagnostic(
+                1.0 / 60.0, 9.81, 0.08, Vector3(-0.4, 0.0, 0.0)):
+            _fail("Shared-context second groom step failed: " + sibling.get_last_error())
+            return
+        var sibling_root: Vector3 = sibling.get_native_diagnostic_root_position()
+        if absf(sibling_root.x - rest_root.x + 0.4) > 0.01:
+            _fail("Second groom GPU state did not move independently")
+            return
+        if (instance.get_native_diagnostic_root_position().distance_to(root_result) > 0.001
+                or instance.get_native_diagnostic_steps() != 1):
+            _fail("Second groom overwritten first groom's simulation state")
+            return
+        if (not instance.reset_native_diagnostic()
+                or instance.get_native_diagnostic_steps() != 0
+                or instance.get_native_diagnostic_root_position().distance_to(rest_root) > 0.0001):
+            _fail("Native simulation state did not reset to source rest geometry")
+            return
+        instance.stop_native_diagnostic()
+        if instance.is_native_diagnostic_active():
+            _fail("Native diagnostic simulation did not release its per-groom state")
+            return
+        if instance.get_native_diagnostic_context_count() != 1:
+            _fail("Stopping one groom destroyed sibling's shared device")
+            return
+        if not sibling.step_native_diagnostic(
+                1.0 / 60.0, 9.81, 0.08, Vector3(-0.2, 0.0, 0.0)):
+            _fail("Surviving groom cannot step after first groom stops")
+            return
+        if sibling.get_native_diagnostic_steps() != 2:
+            _fail("Surviving groom lost simulation history")
+            return
+        sibling.stop_native_diagnostic()
+        if instance.get_native_diagnostic_context_count() != 0:
+            _fail("Last groom did not release standalone device context")
+            return
+
+    print("PASS: real TFX groom, Godot mesh publication", 
+        ", native Vulkan simulation/reset" if native_required else "")
     quit(0)

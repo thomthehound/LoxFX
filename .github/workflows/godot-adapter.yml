@@ -27,16 +27,61 @@ jobs:
           ref: master
           path: external/godot-cpp
           persist-credentials: false
+      - name: Checkout Godauldron as a native integration consumer
+        if: runner.os == 'Linux'
+        uses: actions/checkout@v7
+        with:
+          repository: thomthehound/Godauldron
+          path: external/Godauldron
+          persist-credentials: false
+      - name: Install software Vulkan and SDK headers (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
+      - name: Install official DXC for Vulkan SPIR-V (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dxc"
+          curl --fail --location --retry 3 \
+            https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP/dxc"
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/dxc/lib" >> "$GITHUB_ENV"
+      - name: Install official DXC for native D3D12 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'dxc.zip'
+          $dest = Join-Path $env:RUNNER_TEMP 'dxc'
+          Invoke-WebRequest -Uri 'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dest
+          $compiler = Get-ChildItem -Path $dest -Recurse -Filter dxc.exe |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+            Select-Object -First 1
+          if (!$compiler) { throw 'DXC x64 missing' }
+          "LOXFX_DXC=$($compiler.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $compiler.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Configure optional GDExtension
         run: >
           cmake -S . -B build/godot
           -DBUILD_TESTING=ON
           -DLOXFX_BUILD_TOOLS=ON
           -DLOXFX_BUILD_GODOT_ADAPTER=ON
+          -DLOXFX_GODOT_NATIVE_DIAGNOSTIC=ON
           -DLOXFX_GODOT_CPP_SOURCE_DIR=${{ github.workspace }}/external/godot-cpp
           "-DGODOTCPP_API_VERSION=4.7"
           -DGODOTCPP_TARGET=template_release
           -DCMAKE_BUILD_TYPE=Release
+      - name: Configure Windows DXC path for both native shaders and GDExtension
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # CMake's first configure picks up DXC via PATH from the previous step.
+          # A full native build must never rely on VS bundling a private dxc.
+          if (!(Test-Path $env:LOXFX_DXC)) { throw 'DXC not configured' }
       - name: Compile Godot adapter and core consumers in one CMake build
         run: cmake --build build/godot --config Release --target loxfx_godot loxfx_tfx_inspect loxfx_prepared_groom_tests --parallel 2
       - name: Execute prepared-groom core test in adapter-enabled build
@@ -50,7 +95,11 @@ jobs:
         run: |
           set -euo pipefail
           project=adapters/godot/tests
-          mkdir -p "$project/addons/loxfx/bin" "$project/grooms" build/godot-engine
+          # Force a known CPU Vulkan ICD in CI: this validates GPU command
+          # execution semantics, not physical GPU performance.
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
+          mkdir -p "$project/addons/loxfx/bin" "$project/grooms" "$project/shaders" build/godot-engine
+          cp build/godot/shaders/loxfx_*.spv "$project/shaders/"
           cp build/godot/loxfx.gdextension "$project/addons/loxfx/loxfx.gdextension"
           # An editor import normally generates this list. In a clean
           # headless runtime project, explicitly register the extension;
@@ -74,7 +123,7 @@ jobs:
           # The real integration gate is class registration and dynamic mesh
           # publication in a running SceneTree, not a rushed editor teardown.
           if ! timeout 120s "$engine" --headless --path "$project" \
-              --script res://runtime_smoke.gd; then
+              --script res://runtime_smoke.gd -- --native-required; then
             echo "::error::Native Godot adapter failed its runtime smoke"
             if command -v gdb >/dev/null; then
               gdb -batch -ex "set pagination off" -ex run \
@@ -83,3 +132,23 @@ jobs:
             fi
             exit 1
           fi
+
+      - name: Verify real LoxFX scene inside Godauldron's generic host
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
+          lab=external/Godauldron
+          package="$lab/experiments/loxfx"
+          mkdir -p "$package" "$lab/.godot"
+          cp -r adapters/godot/examples/godauldron/. "$package/"
+          mkdir -p "$package/bin" "$package/shaders" "$package/assets"
+          cp build/godot/shaders/loxfx_*.spv "$package/shaders/"
+          cp adapters/godot/tests/addons/loxfx/bin/libloxfx_godot.so "$package/bin/"
+          cp adapters/godot/tests/grooms/Ratboy_mohawk.tfx "$package/assets/"
+          printf 'res://experiments/loxfx/loxfx.gdextension\n' > "$lab/.godot/extension_list.cfg"
+          engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
+          test -n "$engine"
+          timeout 120s "$engine" --headless --path "$lab" \
+            --script res://experiments/loxfx/scenes/headless_smoke.gd

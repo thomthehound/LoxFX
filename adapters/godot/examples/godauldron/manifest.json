@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "org.loxfx.godot-native-diagnostic",
+  "display_name": "LoxFX / Native Strand Dynamics",
+  "category": "Native GPU / Visual Validation",
+  "description": "Actual LoxFX simulation with diagnostic CPU readback and Godot lines; never production performance.",
+  "entry_scene": "res://experiments/loxfx/scenes/hair_lab.tscn",
+  "native_extensions": ["res://experiments/loxfx/loxfx.gdextension"],
+  "required_native_classes": ["LoxFXGroom3D"],
+  "visualization_path": "diagnostic_cpu_bridge",
+  "parameters": [
+    {"id":"motion","label":"Head movement","type":"choice","default":"sway","options":[
+      {"value":"still","label":"Still"},
+      {"value":"sway","label":"Side-to-side translation"}
+    ]},
+    {"id":"show_placeholder","label":"Show neutral head","type":"bool","default":true},
+    {"id":"background","label":"Backdrop","type":"choice","default":"as_authored","options":[
+      {"value":"as_authored","label":"Slate"},
+      {"value":"light","label":"Light"},
+      {"value":"warm","label":"Warm"}
+    ]},
+    {"id":"followers","label":"Followers per guide","type":"int","default":2,"min":0,"max":3,"step":1},
+    {"id":"gravity","label":"Gravity","type":"float","default":9.81,"min":0.0,"max":30.0,"step":0.1},
+    {"id":"wind_x","label":"Wind X","type":"float","default":0.0,"min":-10.0,"max":10.0,"step":0.1}
+  ]
+}
