@@ -79,8 +79,11 @@ def source_variants(work):
     for name, left, right in [
         ("left_store", "OpStore %v %replacement", ""),
         ("right_store", "", "OpStore %v %replacement"),
+        ("entry_store", "", ""),
     ]:
         assembly = ASSEMBLY.replace("__LEFT_STORE__", left).replace("__RIGHT_STORE__", right)
+        if name == "entry_store":
+            assembly = assembly.replace("%gid_value = OpLoad", "OpStore %v %replacement\n%gid_value = OpLoad")
         asm = work / f"{name}.spvasm"
         output = work / f"{name}.spv"
         asm.write_text(assembly)
@@ -99,6 +102,73 @@ def compile_tools(upstream, probe, bench, work):
         "baseline": code,
         "same_block_only": code.replace(original, "            return false; // Audit: reject unsafe cross-block forwarding."),
     }
+
+    # Exact, on-demand reachability check: can the load block be reached
+    # from the function entry *without* passing through the store block?
+    # This is deliberately a correctness oracle, not the final fast design.
+    start = code.index("    static bool optimizerDoesInstructionDominate(")
+    end = code.index("    static bool optimizerRemoveUnusedVariables(", start)
+    reachability = """    static bool optimizerDoesInstructionDominate(const Shader &shader, const Instruction &store, const Instruction &load) {
+        if (store.blockIndex == load.blockIndex) {
+            return store.wordIndex < load.wordIndex;
+        }
+        const uint32_t storeIndex = uint32_t(&store - shader.instructions.data());
+        const uint32_t loadIndex = uint32_t(&load - shader.instructions.data());
+        uint32_t entry = UINT32_MAX;
+        uint32_t functionOrdinal = UINT32_MAX;
+        for (uint32_t i = 0; i < shader.functions.size(); ++i) {
+            const uint32_t begin = shader.functions[i].labelInstructionIndex;
+            const uint32_t next = (i + 1 < shader.functions.size())
+                ? shader.functions[i + 1].instructionIndex : UINT32_MAX;
+            if (begin <= storeIndex && storeIndex < next) {
+                functionOrdinal = i;
+                entry = shader.instructions[begin].blockIndex;
+                break;
+            }
+        }
+        if (entry == UINT32_MAX) {
+            return false;
+        }
+        if (functionOrdinal + 1 < shader.functions.size() &&
+            loadIndex >= shader.functions[functionOrdinal + 1].instructionIndex) {
+            return false;
+        }
+        const uint32_t *words = shader.inlinedSpirvWords.empty()
+            ? shader.extSpirvWords : shader.inlinedSpirvWords.data();
+        std::vector<uint8_t> seen(shader.blocks.size(), 0);
+        std::vector<uint32_t> stack{entry};
+        while (!stack.empty()) {
+            const uint32_t block = stack.back();
+            stack.pop_back();
+            if (block == store.blockIndex || seen[block]) {
+                continue;
+            }
+            if (block == load.blockIndex) {
+                return false; // Found path bypassing the candidate store.
+            }
+            seen[block] = 1;
+            const uint32_t ti = shader.blocks[block].terminatorInstructionIndex;
+            const uint32_t wi = shader.instructions[ti].wordIndex;
+            const SpvOp op = SpvOp(words[wi] & 0xFFFFU);
+            const uint32_t wordCount = words[wi] >> 16U;
+            uint32_t startWord, count, stride;
+            if (!SpvHasLabels(op, startWord, count, stride, false)) {
+                continue;
+            }
+            for (uint32_t k = 0; k < count && (startWord + k*stride) < wordCount; ++k) {
+                const uint32_t label = words[wi + startWord + k*stride];
+                const uint32_t instr = shader.results[label].instructionIndex;
+                const uint32_t nextBlock = shader.instructions[instr].blockIndex;
+                if (!seen[nextBlock]) {
+                    stack.push_back(nextBlock);
+                }
+            }
+        }
+        return true; // Every path to the load traverses the store block.
+    }
+
+"""
+    variants["exact_reachability"] = code[:start] + reachability + code[end:]
     tools = {}
     for name, cpp in variants.items():
         folder = work / "variants" / name
@@ -123,7 +193,7 @@ def evaluate(probes, shaders, work, iterations):
     for shader in shaders:
         entry = {"source": shader.name, "outputs": {}, "times_us": {}}
         original_text = disasm(shader)
-        for name in ("baseline", "same_block_only"):
+        for name in ("baseline", "same_block_only", "exact_reachability"):
             target = work / "outputs" / name / shader.name
             target.parent.mkdir(parents=True, exist_ok=True)
             p = run(probes[(name, "probe")], shader, target)
@@ -139,13 +209,13 @@ def evaluate(probes, shaders, work, iterations):
                 "opstore_count": optimized_text.count("OpStore"),
                 "bytes": target.stat().st_size,
             }
-            if name == "same_block_only":
+            if name != "baseline":
                 before = work / "outputs" / "baseline" / shader.name
-                entry["differ"] = before.read_bytes() != target.read_bytes()
-                if entry["differ"]:
-                    entry["diff"] = list(difflib.unified_diff(
+                entry["differ_" + name] = before.read_bytes() != target.read_bytes()
+                if entry["differ_" + name]:
+                    entry["diff_" + name] = list(difflib.unified_diff(
                         disasm(before).splitlines(), optimized_text.splitlines(),
-                        fromfile="baseline", tofile="same_block_only", lineterm=""
+                        fromfile="baseline", tofile=name, lineterm=""
                     ))[:125]
             b = require((probes[(name, "bench")], shader, str(iterations)), f"benchmark {name} {shader.name}")
             entry["times_us"][name] = float(b.stdout.strip())
