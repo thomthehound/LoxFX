@@ -144,7 +144,11 @@ before testing batching, prepared descriptors or safe pass fusion. Never
 delete a synchronization dependency based on a theoretical speedup.
 
 **Progress, 15 October 2026:** added `DeviceContext::record_frame` to
-both native backends: six existing source-ordered stage recorders execute
+both native backends: the composite now derives integration and wind timing
+from one authoritative `NativeFrameParameters::time_step` (Codex P2,
+PR #26). Cross-backend tests compare 30 Hz with nonzero wind against explicit
+stage-by-stage recording to prevent inconsistent simulation clocks. Six
+existing source-ordered stage recorders execute
 inside a caller-owned command buffer/list without hidden per-groom submit,
 fence, or readback. Linux Vulkan and Windows D3D12 tests record **two**
 different grooms into **one** externally submitted command batch and verify
