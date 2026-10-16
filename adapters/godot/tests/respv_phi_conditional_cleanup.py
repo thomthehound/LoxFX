@@ -14,7 +14,7 @@ import statistics
 from respv_phi_pass_bench import build_phi_flood, run
 
 
-def gated_sources(cpp, header):
+def gated_sources(cpp, header, minimum_phi_count=0):
     field = "        uint32_t defaultSwitchOpConstantInt = UINT32_MAX;"
     if header.count(field) != 1:
         raise RuntimeError("Shader metadata insertion point changed")
@@ -60,6 +60,22 @@ def gated_sources(cpp, header):
         }
 
 """
+    if minimum_phi_count:
+        # Preserve the historical cleanup on sparse-Phi shaders without
+        # constructing an O(instruction count) schedule-position vector.
+        if minimum_phi_count < 1:
+            raise ValueError("Invalid Phi-count threshold")
+        a = "        requiresFinalPhiCleanup = false;\\n        if (!phis.empty()) {"
+        b = (
+            "        requiresFinalPhiCleanup = !phis.empty() && phis.size() < " +
+            str(minimum_phi_count) + ";\\n" +
+            "        if (phis.size() >= " + str(minimum_phi_count) +
+            " && !phis.empty()) {"
+        )
+        if insertion.count(a.replace("\\\\n", "\\n")) != 1:
+            raise RuntimeError("Scheduling gate anchor changed")
+        insertion = insertion.replace(a.replace("\\\\n", "\\n"),
+                                      b.replace("\\\\n", "\\n"))
     cpp = cpp.replace(anchor, insertion + anchor)
     hook = """        if (!optimizerCompactPhis(context)) {
             return false;
