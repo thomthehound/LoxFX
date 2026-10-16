@@ -127,6 +127,15 @@ upload_two_host_grooms(gpu::DeviceContext& context,
                        const loxfx::PreparedGroom& b) {
     const auto external=context.borrowed_handles();
     const auto before=context.diagnostic_submission_count();
+    auto unrecorded=context.prepare_upload(a);
+    bool premature_finish_rejected=false;
+    try {
+        (void)std::move(unrecorded).finish_after_completion();
+    } catch (const std::logic_error&) {
+        premature_finish_rejected=true;
+    }
+    require(premature_finish_rejected,
+            "D3D12 allowed finalizing an unrecorded upload");
     auto pending_a=context.prepare_upload(a);
     auto pending_b=context.prepare_upload(b);
     require(context.diagnostic_submission_count()==before,
