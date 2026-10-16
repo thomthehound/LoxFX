@@ -745,6 +745,7 @@ int main(int argc,char** argv) {
         check(clock_prep.has_value(),"prepare wind/timestep regression groom");
         auto composite=context.prepare(*clock_prep);
         auto manual=context.prepare(*clock_prep);
+        auto no_wind=context.prepare(*clock_prep);
         HostBatch clock_batch(external_frame.logical);
         clock_batch.init(external_frame.queue_family);
         clock_batch.begin();
@@ -769,9 +770,13 @@ int main(int argc,char** argv) {
         context.record_local_shape(clock_batch.commands,manual,clock.local_shape_stiffness);
         context.record_length_wind(clock_batch.commands,manual,manual_wind);
         context.record_followers(clock_batch.commands,manual);
+        auto calm=clock;
+        calm.winds={};
+        context.record_frame(clock_batch.commands,no_wind,calm);
         clock_batch.submit(external_frame.compute_queue);
         const auto composite_positions=context.diagnostic_read_positions(composite);
         const auto manual_positions=context.diagnostic_read_positions(manual);
+        const auto calm_positions=context.diagnostic_read_positions(no_wind);
         check(composite_positions.size()==manual_positions.size(),
               "composite/manual frame output has different vertex counts");
         for(std::size_t i=0;i<composite_positions.size();++i) {
@@ -782,8 +787,11 @@ int main(int argc,char** argv) {
                   std::abs(a.z-b.z)<0.0003f,
                   "composite Vulkan frame disagrees with unified manual wind clock");
         }
-        check(std::abs(manual_positions[2].x-clock_prep->rest_positions[2].x)>0.001f,
-              "Vulkan nonzero wind regression did not exercise affected vertices");
+        // The no-wind control excludes root translation and shape effects:
+        // any measurable difference at the interior guide vertex comes from
+        // wind itself, rather than unrelated motion of the strand.
+        check(std::abs(manual_positions[2].x-calm_positions[2].x)>0.001f,
+              "Vulkan clock regression did not produce measurable wind motion");
 
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
