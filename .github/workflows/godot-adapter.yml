@@ -133,6 +133,28 @@ jobs:
             exit 1
           fi
 
+      - name: Run original LoxFX compute shaders on Godot's renderer-owned Vulkan device
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Unlike the Compatibility/headless test, this MUST use Godot's
+          # global renderer device and draw graph, not a private Vulkan queue.
+          sudo apt-get install -y xvfb libgl1-mesa-dri
+          export VK_LOADER_DRIVERS_SELECT='*lvp*'
+          proof=build/godot-renderer-proof
+          mkdir -p "$proof/shaders"
+          cp adapters/godot/tests/renderer_owned_compute.gd "$proof/"
+          cp build/godot/shaders/loxfx_integration.spv "$proof/shaders/"
+          cp build/godot/shaders/loxfx_follower_publish.spv "$proof/shaders/"
+          printf 'config_version=5\n\n[application]\nconfig/name="LoxFX Renderer Owned Compute"\n\n[rendering]\nrenderer/rendering_method="forward_plus"\n' > "$proof/project.godot"
+          # Command-line explicitly overrides the minimal project's default.
+          engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
+          test -n "$engine"
+          timeout 150s xvfb-run -a "$engine" --path "$proof" \
+            --rendering-driver vulkan --rendering-method gl_compatibility \
+            --script res://renderer_owned_compute.gd
+
       - name: Verify real LoxFX scene inside Godauldron's generic host
         if: runner.os == 'Linux'
         shell: bash
