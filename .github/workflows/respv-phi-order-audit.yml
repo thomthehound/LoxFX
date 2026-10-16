@@ -7,6 +7,7 @@ on:
       - '.github/workflows/respv-phi-order-audit.yml'
       - 'adapters/godot/tests/respv_phi_probe.cpp'
       - 'adapters/godot/tests/respv_phi_graph_probe.cpp'
+      - 'adapters/godot/tests/respv_phi_pass_bench.py'
       - 'adapters/godot/tests/respv_phi_order_audit.py'
   workflow_dispatch:
 
@@ -61,12 +62,22 @@ jobs:
             --work build/phi-audit-evidence \
             --loxfx build/phi-audit-loxfx/shaders/godot/loxfx_integration.spv \
                     build/phi-audit-loxfx/shaders/godot/loxfx_follower_publish.spv
+      - name: Benchmark cost of final Phi compaction
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_phi_pass_bench.py \
+            --upstream build/phi-audit-upstream \
+            --work build/phi-audit-evidence \
+            --benchmark adapters/godot/tests/respv_bench.cpp \
+            --loxfx build/phi-audit-loxfx/shaders/godot/loxfx_integration.spv \
+                    build/phi-audit-loxfx/shaders/godot/loxfx_follower_publish.spv
       - name: Preserve audit outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: respv-phi-order-audit
           path: |
+            build/phi-audit-evidence/pass-cost/results.json
             build/phi-audit-evidence/audit.json
             build/phi-audit-evidence/summary.json
             build/phi-audit-evidence/shaders/*.comp
