@@ -169,16 +169,194 @@ def compile_tools(upstream, probe, bench, work):
 
 """
     variants["exact_reachability"] = code[:start] + reachability + code[end:]
+
+    # Correct, reusable dominance metadata: derive CFG edges from *actual*
+    # branch terminators, then construct each function's dominator tree.
+    # A dominator-tree Euler interval gives O(1) comparisons per lookup;
+    # parser cost is measured separately from repeated optimizer runs.
+    header = (upstream / "re-spirv.h").read_text()
+    new_header = header.replace(
+        "        std::vector<uint32_t> blockPostOrderIndices;",
+        "        std::vector<uint32_t> blockPostOrderIndices;\n"
+        "        std::vector<uint32_t> blockDomPreOrderIndices;\n"
+        "        std::vector<uint32_t> blockDomPostOrderIndices;"
+    ).replace(
+        "        bool sort(const void *pData, size_t pSize);",
+        "        bool sort(const void *pData, size_t pSize);\n"
+        "        bool buildDominatorTree(const void *pData, size_t pSize);"
+    )
+    if new_header == header:
+        raise RuntimeError("Unable to attach dominator metadata to Shader")
+
+    dom_function = """    bool Shader::buildDominatorTree(const void *pData, size_t pSize) {
+        (void)pSize;
+        const uint32_t *words = reinterpret_cast<const uint32_t *>(pData);
+        const uint32_t n = uint32_t(blocks.size());
+        blockDomPreOrderIndices.assign(n, UINT32_MAX);
+        blockDomPostOrderIndices.assign(n, UINT32_MAX);
+        std::vector<std::vector<uint32_t>> successors(n), predecessors(n);
+        for (uint32_t b = 0; b < n; ++b) {
+            const uint32_t ti = blocks[b].terminatorInstructionIndex;
+            const uint32_t wi = instructions[ti].wordIndex;
+            const SpvOp op = SpvOp(words[wi] & 0xFFFFU);
+            const uint32_t wc = words[wi] >> 16U;
+            uint32_t start, count, stride;
+            if (!SpvHasLabels(op, start, count, stride, false)) {
+                continue;
+            }
+            for (uint32_t j = 0; j < count && start + j*stride < wc; ++j) {
+                const uint32_t label = words[wi + start + j*stride];
+                if (label >= results.size() || results[label].instructionIndex == UINT32_MAX) {
+                    return false;
+                }
+                const uint32_t target = instructions[results[label].instructionIndex].blockIndex;
+                if (target >= n) {
+                    return false;
+                }
+                successors[b].push_back(target);
+                predecessors[target].push_back(b);
+            }
+        }
+        struct Visit { uint32_t block, next; };
+        std::vector<uint32_t> idom(n, UINT32_MAX), rank(n, UINT32_MAX);
+        std::vector<uint8_t> seen(n, 0);
+        std::vector<std::vector<uint32_t>> children(n);
+        uint32_t time = 0;
+        for (const auto &function : functions) {
+            const uint32_t root = instructions[function.labelInstructionIndex].blockIndex;
+            if (root >= n) {
+                return false;
+            }
+            if (seen[root]) {
+                continue;
+            }
+            std::vector<uint32_t> rpo;
+            std::vector<Visit> frames{{root, 0}};
+            seen[root] = 1;
+            while (!frames.empty()) {
+                Visit &f = frames.back();
+                if (f.next < successors[f.block].size()) {
+                    const uint32_t next = successors[f.block][f.next++];
+                    if (!seen[next]) {
+                        seen[next] = 1;
+                        frames.push_back({next, 0});
+                    }
+                } else {
+                    rpo.push_back(f.block);
+                    frames.pop_back();
+                }
+            }
+            std::reverse(rpo.begin(), rpo.end());
+            for (uint32_t i = 0; i < rpo.size(); ++i) {
+                rank[rpo[i]] = i;
+            }
+            idom[root] = root;
+            bool changed;
+            do {
+                changed = false;
+                for (uint32_t i = 1; i < rpo.size(); ++i) {
+                    const uint32_t block = rpo[i];
+                    uint32_t candidate = UINT32_MAX;
+                    for (uint32_t pred : predecessors[block]) {
+                        if (idom[pred] == UINT32_MAX) {
+                            continue;
+                        }
+                        if (candidate == UINT32_MAX) {
+                            candidate = pred;
+                            continue;
+                        }
+                        uint32_t left = pred, right = candidate;
+                        while (left != right) {
+                            while (rank[left] > rank[right]) {
+                                left = idom[left];
+                            }
+                            while (rank[right] > rank[left]) {
+                                right = idom[right];
+                            }
+                        }
+                        candidate = left;
+                    }
+                    if (idom[block] != candidate) {
+                        idom[block] = candidate;
+                        changed = true;
+                    }
+                }
+            } while (changed);
+
+            for (uint32_t b : rpo) {
+                if (b != root && idom[b] != UINT32_MAX) {
+                    children[idom[b]].push_back(b);
+                }
+            }
+            frames.clear();
+            frames.push_back({root, 0});
+            blockDomPreOrderIndices[root] = time++;
+            while (!frames.empty()) {
+                Visit &f = frames.back();
+                if (f.next < children[f.block].size()) {
+                    const uint32_t child = children[f.block][f.next++];
+                    blockDomPreOrderIndices[child] = time++;
+                    frames.push_back({child, 0});
+                } else {
+                    blockDomPostOrderIndices[f.block] = time++;
+                    frames.pop_back();
+                }
+            }
+        }
+        return true;
+    }
+
+"""
+    parse_match = """        if (!sort(data, size)) {
+            clear();
+            return false;
+        }
+
+        return true;
+    }"""
+    if code.count(parse_match) != 1:
+        raise RuntimeError("Unable to locate shader parse hook")
+    precompute = code.replace(
+        parse_match,
+        """        if (!sort(data, size) || !buildDominatorTree(data, size)) {
+            clear();
+            return false;
+        }
+
+        return true;
+    }"""
+    )
+    entry_marker = "    bool Shader::parse(const void *pData, size_t pSize) {"
+    if precompute.count(entry_marker) != 1:
+        raise RuntimeError("Unable to locate Shader::parse")
+    precompute = precompute.replace(entry_marker, dom_function + entry_marker)
+    # Avoid accidentally substituting a region from ordinary DFS intervals:
+    old = """            return (aPreIndex < bPreIndex) && (aPostIndex > bPostIndex);"""
+    new = """            const uint32_t store = pInstructionA.blockIndex;
+            const uint32_t load = pInstructionB.blockIndex;
+            const uint32_t aPre = pShader.blockDomPreOrderIndices[store];
+            const uint32_t bPre = pShader.blockDomPreOrderIndices[load];
+            const uint32_t aPost = pShader.blockDomPostOrderIndices[store];
+            const uint32_t bPost = pShader.blockDomPostOrderIndices[load];
+            return aPre != UINT32_MAX && bPre != UINT32_MAX &&
+                   aPre < bPre && aPost > bPost;"""
+    if precompute.count(old) != 1:
+        raise RuntimeError("Unable to locate dominance test")
+    precompute = precompute.replace(old, new)
+    variants["precomputed_domtree"] = precompute
     tools = {}
     for name, cpp in variants.items():
         folder = work / "variants" / name
         folder.mkdir(parents=True, exist_ok=True)
         source = folder / "re-spirv.cpp"
         source.write_text(cpp)
+        if name == "precomputed_domtree":
+            (folder / "re-spirv.h").write_text(new_header)
         for label, program in (("probe", probe), ("bench", bench)):
             binary = folder / label
             require(("c++", "-std=c++17", "-O2", "-DNDEBUG", 
-                     "-I" + str(upstream), "-I" + str(upstream / "external/SPIRV-Headers/include"),
+                     "-I" + str(folder), "-I" + str(upstream),
+                     "-I" + str(upstream / "external/SPIRV-Headers/include"),
                      source, program, "-o", binary), f"compile {name} {label}")
             tools[(name, label)] = binary
     return tools
@@ -193,7 +371,7 @@ def evaluate(probes, shaders, work, iterations):
     for shader in shaders:
         entry = {"source": shader.name, "outputs": {}, "times_us": {}}
         original_text = disasm(shader)
-        for name in ("baseline", "same_block_only", "exact_reachability"):
+        for name in ("baseline", "same_block_only", "exact_reachability", "precomputed_domtree"):
             target = work / "outputs" / name / shader.name
             target.parent.mkdir(parents=True, exist_ok=True)
             p = run(probes[(name, "probe")], shader, target)
