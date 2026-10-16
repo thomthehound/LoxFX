@@ -600,6 +600,39 @@ def compile_tools(upstream, probe, bench, work):
     }
 
 """
+    # A local sufficient proof in a CFG with arbitrary joins: walking
+    # unique incoming predecessors from a load yields blocks that must
+    # dominate that load. Stop at function entries and any join.
+    predecessor_helper = """    static void optimizerPrepareUniquePredecessors(OptimizerContext &ctx) {
+        const Shader &shader = ctx.shader;
+        const uint32_t n = uint32_t(shader.blocks.size());
+        ctx.uniquePredecessor.assign(n, UINT32_MAX);
+        ctx.entryBlock.assign(n, 0);
+        for (const auto &function : shader.functions) {
+            ctx.entryBlock[shader.instructions[function.labelInstructionIndex].blockIndex] = 1;
+        }
+        const uint32_t *words = shader.inlinedSpirvWords.empty()
+            ? shader.extSpirvWords : shader.inlinedSpirvWords.data();
+        for (uint32_t b = 0; b < n; ++b) {
+            const uint32_t ti = shader.blocks[b].terminatorInstructionIndex;
+            const uint32_t wi = shader.instructions[ti].wordIndex;
+            const SpvOp op = SpvOp(words[wi] & 0xFFFFU);
+            const uint32_t count = words[wi] >> 16U;
+            uint32_t start, labels, stride;
+            if (!SpvHasLabels(op, start, labels, stride, false)) continue;
+            for (uint32_t k = 0; k < labels && start + k*stride < count; ++k) {
+                const uint32_t label = words[wi + start + k*stride];
+                const uint32_t target = shader.instructions[
+                    shader.results[label].instructionIndex].blockIndex;
+                uint32_t &pred = ctx.uniquePredecessor[target];
+                if (pred == UINT32_MAX) pred = b;
+                else if (pred != b) pred = UINT32_MAX - 1;
+            }
+        }
+        ctx.predecessorReady = true;
+    }
+
+"""
     adaptive = cached
     cached_lookup = """        const auto found = ctx.reachabilityWithoutStore.find(store.blockIndex);
         if (found != ctx.reachabilityWithoutStore.end()) {
@@ -625,11 +658,37 @@ def compile_tools(upstream, probe, bench, work):
         // Avoid quadratic work/memory when a shader has many distinct stores.
         // The threshold is experimental and must be justified by timings.
         if (ctx.reachabilityWithoutStore.size() >= 4) {
+            // With many distinct stores, first try a load-specific
+            // single-predecessor corridor. A member of that corridor
+            // dominates the load even if unrelated CFG regions contain joins.
+            if (!ctx.predecessorReady) optimizerPrepareUniquePredecessors(ctx);
+            auto it = ctx.corridorForLoad.find(load.blockIndex);
+            if (it == ctx.corridorForLoad.end() &&
+                ctx.corridorForLoad.size() < 4) {
+                std::vector<uint8_t> members(shader.blocks.size(), 0);
+                uint32_t current = load.blockIndex;
+                while (current < members.size() && !members[current]) {
+                    members[current] = 1;
+                    if (ctx.entryBlock[current]) break;
+                    const uint32_t pred = ctx.uniquePredecessor[current];
+                    if (pred >= members.size()) break;
+                    current = pred;
+                }
+                it = ctx.corridorForLoad.emplace(
+                    load.blockIndex, std::move(members)).first;
+            }
+            if (it != ctx.corridorForLoad.end() &&
+                it->second[store.blockIndex]) {
+                return true;
+            }
+            // If the local proof is insufficient, build full reusable
+            // dominance information once and retain exact semantics.
             if (!optimizerBuildLazyDominatorTree(ctx)) {
-                return false;  // Never forward without a trustworthy proof.
+                return false;
             }
             ctx.lazyDomReady = true;
             ctx.reachabilityWithoutStore.clear();
+            ctx.corridorForLoad.clear();
             const uint32_t a = store.blockIndex, b = load.blockIndex;
             return ctx.domPre[a] != UINT32_MAX && ctx.domPre[b] != UINT32_MAX &&
                    ctx.domPre[a] < ctx.domPre[b] && ctx.domPost[a] > ctx.domPost[b];
@@ -641,8 +700,12 @@ def compile_tools(upstream, probe, bench, work):
         std::vector<uint32_t> domPre, domPost;
         bool lazyDomReady = false;
         bool forestChecked = false, cfgIsForest = false;
+        std::vector<uint32_t> uniquePredecessor;
+        std::vector<uint8_t> entryBlock;
+        std::unordered_map<uint32_t, std::vector<uint8_t>> corridorForLoad;
+        bool predecessorReady = false;
 """
-    lazy_code = code[:start] + lazy_helper + forest_helper + adaptive + code[end:]
+    lazy_code = code[:start] + lazy_helper + forest_helper + predecessor_helper + adaptive + code[end:]
     lazy_code = lazy_code.replace(context_marker, "        Options options;\n" + fields + "    };\n")
     if lazy_code.count(call) != 1:
         raise RuntimeError("Cannot find adaptive dominance call site")
