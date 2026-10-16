@@ -86,6 +86,36 @@ All **128/128** compiled to valid input SPIR-V, all **128/128** optimized with a
 
 These are additional cases beyond the earlier 128-configuration semantic campaign; they increase confidence in the current optimizer but are not a proof for all structured CFGs. [Source](respv_phi_stress_campaign.py) remains exclusively on the draft diagnostic branch.
 
+## Phi scheduling-gate and dominance scaling findings (2026-10-16)
+
+### Conditional final-Phi cleanup gate
+
+[Passing scheduling-gate experiment](https://github.com/thomthehound/LoxFX/actions/runs/38961353612) compares the original final pass, unconditional removal, and a conservative parse-time scheduling flag. If any Phi predecessor's terminator is scheduled after the Phi, the gate retains the original cleanup; otherwise it skips the pass. Eight of nine benchmark shaders were classified as eligible to omit cleanup; the specifically constructed late-terminator case correctly retained the pass. All outputs validated and remained identical across variants.
+
+| Input | Original parse+opt (µs) | No final pass (µs) | Gated pass (µs) | Gate retained cleanup? |
+|---|---:|---:|---:|---|
+| Phi flood 16 | 24.0145 | 23.0332 | 23.2676 | No |
+| Phi flood 64 | 100.8720 | 88.5905 | 89.1905 | No |
+| Phi flood 128 | 245.1660 | 199.3670 | 199.1120 | No |
+| LoxFX integration | 18.3169 | 18.2363 | 18.3185 | No |
+| LoxFX follower | 19.4284 | 19.5204 | 19.5847 | No |
+| Late Phi ordering control | 10.3994 | 10.4601 | 10.5411 | **Yes** |
+
+This is a **proof of concept**, not a universal proof of safety. The gate relies on the modern predecessor-label dependency invariant and on CFG-changing transformations finishing during the initial evaluation pass. Later variable/decorations cleanup must be audited to ensure it cannot invalidate a previously compacted Phi. The gate has measurable extra cost on some small inputs; a production-worthy mechanism must minimize that cost and justify any threshold from benchmarks.
+
+### GPU-verified dominance defect and distinct-store scaling
+
+[Passing expanded dominance/Vulkan audit](https://github.com/thomthehound/LoxFX/actions/runs/38961353580) executed the true input and multiple optimizer variants for three store/load fixtures across eight invocation lanes. Stock optimizer **miscompiled** the conditional right-hand store: input writes `7,11,11,11,11,11,11,11`; stock optimizer writes all `11`. Exact, cached-exact, and precomputed-domtree variants preserve the input output. Correct left-store and entry-store controls also preserved their results.
+
+A new stress workload places each variable's sole store in a **different** CFG block, instead of putting many stores in one common block:
+
+| Workload | Stock optimize (µs) | Exact traversal (µs) | Cached reachability (µs) | Upfront dominator tree (µs) | Stock parse+opt (µs) | Cached parse+opt (µs) | Upfront domtree parse+opt (µs) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 32 distinct store blocks | 3.4978 | 7.9426 | 8.7231 | 4.0639 | 10.7569 | 15.9452 | 13.1300 |
+| 128 distinct store blocks | 12.5161 | 69.9800 | 74.6080 | 12.7200 | 40.2700 | 102.3700 | 51.2872 |
+
+The cached-per-store approach has quadratic worst-case scaling and is **not generally performance-acceptable**, even though it works well when many loads share one store. Unconditional dominator preprocessing avoids that optimizer blowup but adds significant parsing overhead. A separate **adaptive, lazy dominator-tree** research variant has been added to the draft CI, switching from cached reachability to a reusable dominator tree after several distinct store-block queries; **its correctness and performance evidence are pending**. Do not ship the fixed threshold or claim the adaptive approach succeeds until both evidence types pass.
+
 ## Unresolved questions and next experiments
 
 1. **Prove or falsify the modern Phi scheduling invariant.** Construct validated shaders with a predecessor terminator scheduled after a dependent `OpPhi`; exercise pruned switch edges, duplicate targets, nested selections, loops, backedges, continue/merge combinations, Phi chains, multi-function and inlining. Instrument final-pass mutations and compare generated CFG/operands with the actual predecessor sets. For valid cases, compare GPU results, not only `spirv-val`.
