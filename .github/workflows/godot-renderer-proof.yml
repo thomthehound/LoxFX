@@ -20,8 +20,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers xvfb xauth \
-            libgl1-mesa-dri vulkan-validationlayers spirv-tools \
-            spirv-cross glslang-tools
+            libgl1-mesa-dri vulkan-validationlayers spirv-tools
       - name: Install official DXC
         shell: bash
         run: |
@@ -77,53 +76,23 @@ jobs:
           printf 'config_version=5\n\n[application]\nconfig/name="LoxFX Renderer Owned Compute"\n\n[rendering]\nrenderer/rendering_method="forward_plus"\n' > "$proof/project.godot"
           engine="$(find build/godot-engine -maxdepth 1 -type f -name 'Godot_v4.7.2-stable*' -print -quit)"
           test -n "$engine"
-          # The input binaries pass spirv-val, yet Godot 4.7's internal
-          # re-SPIRV optimizer can emit an undefined forward-referenced ID.
-          # Probe equivalent validated shader normalizations without changing
-          # the authored HLSL or disabling renderer optimization globally.
-          original="$proof/shaders/loxfx_integration.spv"
-          cp "$original" "$proof/integration.original.spv"
-          spirv-opt -O "$original" -o "$proof/integration.opt.spv"
-          spirv-opt --legalize-hlsl -O "$original" -o "$proof/integration.legalize.spv"
-          dxc -spirv -T cs_6_6 -E IntegrationAndGlobalShapeConstraints \
-            -DLOXFX_SPIRV=1 -fspv-target-env=vulkan1.2 \
-            -fspv-entrypoint-name=main -O0 \
-            -Fo "$proof/integration.noopt.spv" \
-            shaders/IntegrationAndGlobalShapeConstraints.hlsl
-          # A normal compiler-produced GLSL intermediate preserves the
-          # actual DXC->SPIR-V dataflow while presenting Godot's own
-          # reflection/optimizer a GLSL-shaped SPIR-V module.
-          spirv-cross "$proof/integration.original.spv" --version 450 \
-            --vulkan-semantics --output "$proof/integration.glsl.comp"
-          glslangValidator -V --target-env vulkan1.2 -S comp \
-            -o "$proof/integration.glsl.spv" "$proof/integration.glsl.comp"
-          for variant in original opt legalize noopt glsl; do
-            spirv-val --target-env vulkan1.2 "$proof/integration.$variant.spv"
-          done
-
-          passed=""
-          for variant in original opt legalize noopt glsl; do
-            echo "===== BEGIN RENDERER PROOF: $variant ====="
-            cp "$proof/integration.$variant.spv" "$original"
-            if timeout 70s xvfb-run -a "$engine" --path "$proof" \
+          # The ONLY passing gate is the normal production renderer.
+          # Debug mode is a diagnostic control and MUST NOT be accepted in
+          # place of the normal Godot rendering pipeline.
+          if timeout 90s xvfb-run -a "$engine" --path "$proof" \
+              --rendering-driver vulkan --rendering-method forward_plus \
+              --audio-driver Dummy --script res://renderer_owned_compute.gd; then
+            echo "PASS: normal Godot renderer-owned LoxFX compute"
+          else
+            echo "::error::Normal renderer failed LoxFX integration module"
+            echo "Diagnosing the internal Godot re-SPIRV optimization:"
+            if timeout 90s xvfb-run -a "$engine" --path "$proof" \
+                --generate-spirv-debug-info \
                 --rendering-driver vulkan --rendering-method forward_plus \
                 --audio-driver Dummy --script res://renderer_owned_compute.gd; then
-              echo "GPU PROOF PASS: $variant"
-              passed="$passed $variant"
+              echo "::notice::Debug-mode control passed; normal renderer still fails"
             else
-              echo "GPU PROOF FAIL: $variant"
+              echo "::warning::Both normal and debug-mode controls failed"
             fi
-          done
-          echo "===== BEGIN DIAGNOSTIC: original with re-SPIRV disabled ====="
-          cp "$proof/integration.original.spv" "$original"
-          if timeout 70s xvfb-run -a "$engine" --path "$proof" \
-              --generate-spirv-debug-info --rendering-driver vulkan \
-              --rendering-method forward_plus --audio-driver Dummy \
-              --script res://renderer_owned_compute.gd; then
-            echo "GPU PROOF PASS: original, debug mode bypassing re-SPIRV"
-          else
-            echo "GPU PROOF FAIL: original, debug mode bypassing re-SPIRV"
+            exit 1
           fi
-          echo "Normal-mode passing variants:$passed"
-          # Retain failure until Godot's NORMAL production renderer works.
-          test -n "$passed"
