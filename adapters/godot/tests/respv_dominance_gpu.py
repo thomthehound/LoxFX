@@ -24,7 +24,7 @@ def main():
         "entry_store.spv": [11] * 8,
     }
     variants = ("baseline", "cached_filtered_exact", "cached_without_final_phi",
-                "exact_reachability", "precomputed_domtree", "adaptive_domtree", "adaptive_bitset")
+                "exact_reachability", "precomputed_domtree", "adaptive_domtree", "adaptive_bitset", "structured_corridor")
     report = {}
     for shader, values in expected.items():
         source = work / "shaders" / shader
@@ -49,7 +49,7 @@ def main():
     a.result.parent.mkdir(parents=True, exist_ok=True)
     a.result.write_text(json.dumps(report, indent=2) + "\n")
     print("DOMINANCE_GPU_SUMMARY:",
-          json.dumps({"inputs": len(report), "corrected_gpu_matches": 18,
+          json.dumps({"inputs": len(report), "corrected_gpu_matches": 21,
                       "baseline_right_store_diverges": True}), flush=True)
 
 
