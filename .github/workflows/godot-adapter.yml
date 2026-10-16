@@ -140,7 +140,7 @@ jobs:
           set -euo pipefail
           # Unlike the Compatibility/headless test, this MUST use Godot's
           # global renderer device and draw graph, not a private Vulkan queue.
-          sudo apt-get install -y xvfb libgl1-mesa-dri
+          sudo apt-get install -y xvfb xauth libgl1-mesa-dri
           export VK_LOADER_DRIVERS_SELECT='*lvp*'
           proof=build/godot-renderer-proof
           mkdir -p "$proof/shaders"
