@@ -1,0 +1,113 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 thomthehound
+# SPDX-License-Identifier: Apache-2.0
+name: re-SPIRV transformation diagnostics
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  standalone-optimizer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install SPIR-V tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y spirv-tools glslc libvulkan-dev
+      - name: Install official DXC
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dxc"
+          curl --fail --location --retry 3 \
+            https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP/dxc"
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/dxc/lib" >> "$GITHUB_ENV"
+      - name: Build the Godot-targeted LoxFX shaders
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/respv-loxfx \
+            -DLOXFX_BUILD_GODOT_RENDERER_PROOF=ON \
+            -DLOXFX_BUILD_TOOLS=OFF -DBUILD_TESTING=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/respv-loxfx \
+            --target loxfx_godot_renderer_shaders --parallel 2
+      - name: Build re-SPIRV and the exact Godot-option probe
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/renderbag/re-spirv.git build/re-spirv
+          cmake -S build/re-spirv -B build/respv-build \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/respv-build --target re-spirv --parallel 2
+          c++ -std=c++17 -O2 \
+            -Ibuild/re-spirv -Ibuild/re-spirv/external/SPIRV-Headers/include \
+            adapters/godot/tests/respv_probe.cpp \
+            build/respv-build/libre-spirv.a -o build/respv_probe
+      - name: Compile optimized and unoptimized control-flow fixtures
+        run: |
+          set -euo pipefail
+          glslc --target-env=vulkan1.2 -fshader-stage=compute -O \
+            adapters/godot/tests/respv_loop.comp -o build/respv-loop-optimized.spv
+          glslc --target-env=vulkan1.2 -fshader-stage=compute -O0 \
+            adapters/godot/tests/respv_loop.comp -o build/respv-loop-unoptimized-raw.spv
+          spirv-opt --strip-debug build/respv-loop-unoptimized-raw.spv \
+            -o build/respv-loop-unoptimized.spv
+      - name: Isolate transformation validity and dead-code-elimination effects
+        run: |
+          set -euo pipefail
+          python3 adapters/godot/tests/respv_diagnose.py \
+            --probe build/respv_probe --output build/respv-evidence/stock \
+            build/respv-loxfx/shaders/godot/loxfx_integration.spv \
+            build/respv-loxfx/shaders/godot/loxfx_follower_publish.spv \
+            build/respv-loop-optimized.spv \
+            build/respv-loop-unoptimized.spv
+          cp build/respv-loxfx/shaders/godot/*.spv build/respv-evidence/
+          cp build/respv-loop-*.spv build/respv-evidence/
+      - name: Check the candidate Phi reference-counting fix
+        run: |
+          set -euo pipefail
+          git -C build/re-spirv apply --check \
+            "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
+          git -C build/re-spirv apply \
+            "$GITHUB_WORKSPACE/adapters/godot/tests/respv-phi-dependencies.patch"
+          cmake --build build/respv-build --target re-spirv --parallel 2
+          c++ -std=c++17 -O2 \
+            -Ibuild/re-spirv -Ibuild/re-spirv/external/SPIRV-Headers/include \
+            adapters/godot/tests/respv_probe.cpp \
+            build/respv-build/libre-spirv.a -o build/respv_probe_patched
+          python3 adapters/godot/tests/respv_diagnose.py \
+            --probe build/respv_probe_patched --output build/respv-evidence/patched \
+            build/respv-loxfx/shaders/godot/loxfx_integration.spv \
+            build/respv-loxfx/shaders/godot/loxfx_follower_publish.spv \
+            build/respv-loop-optimized.spv \
+            build/respv-loop-unoptimized.spv
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          results = json.loads(
+              Path("build/respv-evidence/patched/findings.json").read_text()
+          )
+          failures = [entry["shader"] for entry in results
+                      if not entry["variants"]["default"].get("valid")]
+          if failures:
+              raise SystemExit("Patched optimizer still corrupts: " + ", ".join(failures))
+          print("PASS: all transformed shader modules validate")
+          PY
+          cmp build/respv-evidence/stock/loxfx_integration.default.spv \
+              build/respv-evidence/patched/loxfx_integration.default.spv
+          cmp build/respv-evidence/stock/respv-loop-unoptimized.default.spv \
+              build/respv-evidence/patched/respv-loop-unoptimized.default.spv
+      - name: Preserve diagnostic output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: respv-transform-evidence
+          path: build/respv-evidence
+          if-no-files-found: warn
