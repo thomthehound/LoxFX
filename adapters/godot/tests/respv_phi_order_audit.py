@@ -103,11 +103,33 @@ def prepare_variants(source, dest):
             return false;
         }""")
 
+    # Make the historical workaround's actual effect observable.
+    # Instrument only the call in the final pass, not the main evaluation.
+    final_call = """            if (!optimizerCompactPhi(phi.instructionIndex, rContext)) {
+                return false;
+            }"""
+    traced_call = """            const uint32_t beforeWords = optimizedWords[wordIndex] >> 16U;
+            const std::vector<uint32_t> before(
+                optimizedWords + wordIndex, optimizedWords + wordIndex + beforeWords);
+            if (!optimizerCompactPhi(phi.instructionIndex, rContext)) {
+                return false;
+            }
+            const uint32_t afterWords = optimizedWords[wordIndex] >> 16U;
+            bool changed = beforeWords != afterWords;
+            for (uint32_t j = 0; !changed && j < beforeWords; ++j) {
+                changed = before[j] != optimizedWords[wordIndex + j];
+            }
+            if (changed) {
+                fprintf(stderr, "PHI_FINAL_CHANGED index=%u old_words=%u new_words=%u\\n",
+                    phi.instructionIndex, beforeWords, afterWords);
+            }"""
+    traced = replace_once(original, final_call, traced_call)
     variants = {
         "baseline": original,
         "no-final-phi": no_final,
         "ordered-phi": ordered,
         "ordered-no-final": ordered_no_final,
+        "trace_final": traced,
     }
     dest.mkdir(parents=True, exist_ok=True)
     for name, code in variants.items():
@@ -371,6 +393,11 @@ def main():
                 if proc.returncode != 0:
                     record["variants"][mode] = {"executed": False, "error": proc.stderr.strip()[-350]}
                     continue
+                if mode == "trace_final":
+                    record["final_mutations"] = proc.stderr.count("PHI_FINAL_CHANGED")
+                    record["final_trace"] = [
+                        line for line in proc.stderr.splitlines() if "PHI_FINAL_CHANGED" in line
+                    ][:25]
                 record["variants"][mode] = inspect(output)
                 record["variants"][mode]["executed"] = True
                 record["variants"][mode]["same_as_baseline"] = (
@@ -392,6 +419,14 @@ def main():
         }
     print("COUNTS:", json.dumps(counts))
     print("CASES THAT DIFFER WITHOUT FINAL PHI:", json.dumps(changes[:50]))
+    mutated = [
+        {"shader": case["shader"], "spec_id": case["spec_id"],
+         "value": case["value"], "mutations": case.get("final_mutations", 0),
+         "trace": case.get("final_trace", [])}
+        for case in results if case.get("final_mutations", 0)
+    ]
+    print("PHI FINAL MUTATIONS:", json.dumps(mutated[:80]))
+
     print("PHI ORDERING:", json.dumps([
         {"shader": entry["shader"], "baseline_late": entry["baseline"]["late"],
          "ordered_late": entry["ordered-phi"]["late"]}
@@ -399,6 +434,7 @@ def main():
     ]))
     (work / "summary.json").write_text(json.dumps({
         "counts": counts, "late_phi_cases": changes, "ordering": order_probes,
+        "final_mutation_cases": mutated,
     }, indent=2) + "\n")
 
 
