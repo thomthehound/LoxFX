@@ -68,9 +68,16 @@ a LoxFX diagnostic submission or readback. The Godot diagnostic adapter
 uses the same recorder, but still performs an explicitly blocking transfer
 afterwards. See [native frame recording](NATIVE_FRAME_RECORDING.md).
 
-This does **not** finish the renderer-owned preparation/upload, render-thread
-submission contract, GPU-to-draw buffer visibility or GPU resident viewport
-publication steps below.
+A follow-on native milestone now splits resource allocation and staging,
+host-owned initial upload recording, and explicit fence completion on
+**both Vulkan and D3D12**. No GPU work is submitted or waited on by the
+new staging/recording operations. The blocking diagnostic methods are now
+implemented in terms of these primitives. See
+[host-owned groom upload](HOST_OWNED_GROOM_UPLOAD.md).
+
+This does **not** finish Godot's renderer-thread submission/device negotiation,
+host in-flight fence lifecycle, GPU-to-draw buffer visibility or GPU-resident
+viewport publication steps below.
 
 ## Next executable boundary: renderer-owned prototype, one platform first
 
