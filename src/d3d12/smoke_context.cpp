@@ -482,6 +482,26 @@ ID3D12Resource* GroomState::tangents_buffer() const noexcept {
     return impl_?impl_->tangents.Get():nullptr;
 }
 
+struct PendingGroomUpload::Impl {
+    GroomState groom;
+    ComPtr<ID3D12Resource> staging;
+    bool recorded = false;
+    Impl(GroomState&& state, ComPtr<ID3D12Resource> upload)
+        : groom(std::move(state)), staging(std::move(upload)) {}
+};
+PendingGroomUpload::PendingGroomUpload(std::unique_ptr<Impl> p) noexcept
+    : impl_(std::move(p)) {}
+PendingGroomUpload::~PendingGroomUpload() = default;
+PendingGroomUpload::PendingGroomUpload(PendingGroomUpload&&) noexcept = default;
+PendingGroomUpload& PendingGroomUpload::operator=(PendingGroomUpload&&) noexcept = default;
+GroomState PendingGroomUpload::finish_after_completion() && {
+    if (!impl_ || !impl_->recorded)
+        throw std::logic_error("D3D12 groom upload not recorded or already consumed");
+    GroomState ready=std::move(impl_->groom);
+    impl_.reset(); // upload heap may only be reclaimed after HOST completion
+    return ready;
+}
+
 DeviceContext::DeviceContext(const std::filesystem::path& dxil,AdapterChoice preference)
 :impl_(std::make_shared<Impl>()) {
     impl_->create_standalone(preference);
@@ -496,7 +516,7 @@ DeviceContext::~DeviceContext()=default;
 DeviceContext::DeviceContext(DeviceContext&&) noexcept=default;
 DeviceContext& DeviceContext::operator=(DeviceContext&&) noexcept=default;
 
-GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
+PendingGroomUpload DeviceContext::prepare_upload(const PreparedGroom& source){
     if(!impl_)throw std::logic_error("device context was moved");
     const auto validation=validate_prepared_groom(source);
     if(!validation)throw std::invalid_argument(validation.error());
@@ -589,25 +609,44 @@ GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source){
                 source.follower_root_offsets.size()*sizeof(Float4));
     upload->Unmap(0,nullptr);
 
-    auto* cmd=impl_->begin();
-    for(ID3D12Resource* target:{g->current.Get(),g->previous.Get(),g->rest.Get()})
-        cmd->CopyBufferRegion(target,0,upload.Get(),0,g->bytes);
-    cmd->CopyBufferRegion(g->root_previous_previous.Get(),0,
-                          upload.Get(),g->bytes,g->root_history_bytes);
-    cmd->CopyBufferRegion(g->guide_static_data.Get(),0,upload.Get(),
-        g->bytes+g->root_history_bytes,g->guide_static_bytes);
-    transition(cmd,g->current.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+    return PendingGroomUpload(std::make_unique<PendingGroomUpload::Impl>(
+        GroomState(std::move(g)), std::move(upload)));
+}
+
+void DeviceContext::record_initial_upload(ID3D12GraphicsCommandList* cmd,
+                                          PendingGroomUpload& pending) const {
+    if (!impl_ || !cmd || !pending.impl_ || pending.impl_->recorded)
+        throw std::invalid_argument("invalid or already recorded D3D12 groom upload");
+    auto& state=pending.impl_->groom;
+    if (!state.impl_ || state.impl_->context_id != impl_.get())
+        throw std::invalid_argument("staged D3D12 groom belongs to another device");
+    const auto& g=*state.impl_;
+    auto* upload=pending.impl_->staging.Get();
+    for(ID3D12Resource* target:{g.current.Get(),g.previous.Get(),g.rest.Get()})
+        cmd->CopyBufferRegion(target,0,upload,0,g.bytes);
+    cmd->CopyBufferRegion(g.root_previous_previous.Get(),0,
+                          upload,g.bytes,g.root_history_bytes);
+    cmd->CopyBufferRegion(g.guide_static_data.Get(),0,upload,
+        g.bytes+g.root_history_bytes,g.guide_static_bytes);
+    transition(cmd,g.current.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    transition(cmd,g->previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+    transition(cmd,g.previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    transition(cmd,g->rest.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+    transition(cmd,g.rest.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    transition(cmd,g->guide_static_data.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+    transition(cmd,g.guide_static_data.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                          D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    transition(cmd,g->root_previous_previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+    transition(cmd,g.root_previous_previous.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    impl_->submit(); // Diagnostic upload fence only; staging then released.
-    return GroomState(std::move(g));
+    pending.impl_->recorded=true;
+}
+
+GroomState DeviceContext::prepare_diagnostic(const PreparedGroom& source) {
+    auto pending=prepare_upload(source);
+    auto* cmd=begin_diagnostic_commands();
+    record_initial_upload(cmd,pending);
+    submit_diagnostic_and_wait();
+    return std::move(pending).finish_after_completion();
 }
 
 void DeviceContext::record_integration(ID3D12GraphicsCommandList* cmd,
