@@ -22,9 +22,20 @@ def make_fix(src):
             if (terminatorReduced) {
                 // No cases remain. A genuine unconditional branch needs no
                 // synthetic integer selector with a separate DCE lifetime.
-                optimizedWords[wordIndex] = SpvOpBranch | (2U << 16U);
-                optimizedWords[wordIndex + 1] = newDefaultLabelId;
-                for (uint32_t j = wordIndex + 2; j < wordIndex + wordCount; ++j) {
+                // SPIR-V requires SelectionMerge immediately before
+                // OpBranchConditional or OpSwitch, never before OpBranch.
+                // Reuse the existing conditional-branch reduction technique.
+                const uint32_t mergeInstructionIndex = pInstructionIndex - 1;
+                const uint32_t mergeWordIndex = rContext.shader.instructions[mergeInstructionIndex].wordIndex;
+                const SpvOp mergeOp = SpvOp(optimizedWords[mergeWordIndex] & 0xFFFFU);
+                uint32_t patchIndex = wordIndex;
+                if (mergeOp == SpvOpSelectionMerge) {
+                    optimizerReduceLabelDegree(mergeInstructionIndex, optimizedWords[mergeWordIndex + 1], rContext);
+                    patchIndex = mergeWordIndex;
+                }
+                optimizedWords[patchIndex] = SpvOpBranch | (2U << 16U);
+                optimizedWords[patchIndex + 1] = newDefaultLabelId;
+                for (uint32_t j = patchIndex + 2; j < wordIndex + wordCount; ++j) {
                     optimizedWords[j] = UINT32_MAX;
                 }
             }
