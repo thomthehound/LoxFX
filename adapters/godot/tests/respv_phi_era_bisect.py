@@ -122,6 +122,34 @@ def main():
         records.append(era)
     (out / "eras.json").write_text(json.dumps(records, indent=2) + "\n")
 
+    # Lock in the observed 2024 boundary. Printing a report is not a
+    # regression test if the historical failure silently stops reproducing.
+    expected_cases = {
+        "nested_phi_prune_16_0.spv",
+        "nested_phi_prune_16_1.spv",
+    }
+    for era in records:
+        if not all(era["variants"].get(mode, {}).get("built")
+                   for mode in ("original", "no-final")):
+            raise RuntimeError(f"Cannot evaluate historical boundary: {era['rev']} did not build both variants")
+        cases = {case["name"]: case for case in era["inputs"]}
+        if set(cases) != expected_cases or len(era["inputs"]) != len(expected_cases):
+            raise RuntimeError(f"Historical corpus incomplete in {era['rev']}: {sorted(cases)}")
+        for name, case in cases.items():
+            retained = case.get("original", {})
+            omitted = case.get("no-final", {})
+            if not retained.get("ran") or retained.get("valid") is not True:
+                raise RuntimeError(f"Historical control failed with safeguard: {era['rev']} {name}")
+            if not omitted.get("ran"):
+                raise RuntimeError(f"Historical no-safeguard variant did not produce output: {era['rev']} {name}")
+            if era["rev"] == "2024-08-reverted":
+                if omitted.get("valid") is not False or case.get("changed") is not True:
+                    raise RuntimeError(f"Expected pre-fix Phi failure absent: {era['rev']} {name}")
+            elif omitted.get("valid") is not True or case.get("changed") is not False:
+                raise RuntimeError(f"Phi regression after predecessor-edge fix: {era['rev']} {name}")
+    print("PHI_ERA_BOUNDARY: verified pre-fix failure and post-fix equivalence", flush=True)
+
+
 
 if __name__ == "__main__":
     main()
