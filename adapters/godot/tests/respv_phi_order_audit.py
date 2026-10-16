@@ -188,7 +188,7 @@ OpMemberDecorate %Out 0 Offset 0
     previous = "%one"
     for i in range(64):
         new = f"%chain{i}"
-        program += f"{new} = OpIAdd %int {previous} %one\\n"
+        program += f"{new} = OpIAdd %int {previous} %one\n"
         previous = new
     program += f"""%folded_condition = OpIEqual %bool {previous} %zero
 OpSelectionMerge %merge None
