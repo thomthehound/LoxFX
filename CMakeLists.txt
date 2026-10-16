@@ -102,7 +102,10 @@ install(TARGETS loxfx_core EXPORT LoxFXTargets
 # Prototype backend headers are not installed as public SDK APIs.
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   PATTERN "vulkan" EXCLUDE
-  PATTERN "d3d12" EXCLUDE)
+  PATTERN "d3d12" EXCLUDE
+  # This frame contract belongs to experimental backend recorders and may
+  # change before a production scheduling API; do not publish it via Core.
+  PATTERN "native_frame_parameters.h" EXCLUDE)
 install(EXPORT LoxFXTargets
   FILE LoxFXTargets.cmake
   NAMESPACE LoxFX::
