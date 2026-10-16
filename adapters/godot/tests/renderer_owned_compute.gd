@@ -184,6 +184,10 @@ func _record_on_renderer() -> void:
     _rd.compute_list_bind_uniform_set(command, first_set, 0)
     _rd.compute_list_set_push_constant(command, _integration_constants(), 48)
     _rd.compute_list_dispatch(command, 1, 1, 1)
+    # Godot 4.7's explicit compute-list boundary flushes the producer
+    # usages into its render graph before follower/tangent consumption.
+    # Simply rebinding a pipeline is not a guaranteed memory dependency.
+    _rd.compute_list_add_barrier(command)
     _rd.compute_list_bind_compute_pipeline(command, last_pipeline)
     _rd.compute_list_bind_uniform_set(command, last_set, 0)
     _rd.compute_list_set_push_constant(command, _follower_constants(), 16)
