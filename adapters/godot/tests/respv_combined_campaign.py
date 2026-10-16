@@ -151,7 +151,7 @@ def main():
     bench_inputs = [
         ("loxfx_integration", args.loxfx[0].resolve(), 0, SPECS[0], True),
         ("loxfx_follower", args.loxfx[1].resolve(), 0, SPECS[0], True),
-        ("switch_o0", inputs / "nested_switch.O0-stripped.spv", 0, SPECS[0]),
+        ("switch_o0", inputs / "nested_switch.O0-stripped.spv", 0, SPECS[0], False),
         ("switch_o0_inlined", inputs / "nested_switch.O0-stripped.spv", 1, SPECS[2], False),
         ("nested_join", inputs / "sibling_merges.O0-stripped.spv", 1, SPECS[3], False),
         ("nested_loop", inputs / "two_loops.O.spv", 0, SPECS[1], False),
