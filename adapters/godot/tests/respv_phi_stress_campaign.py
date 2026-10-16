@@ -73,7 +73,7 @@ SHAPES = {
     }""",
     "two_loops": """void run_case(inout int x, int j) {
         for (int i=0;i<COUNT;i++) {
-            if ((i+j)&1) x += 2+i; else x -= 1;
+            if (((i+j)&1) != 0) x += 2+i; else x -= 1;
             for (int k=0;k<2;k++) {
                 if (A && (k+j+i)%3 == 0) x += 4;
                 else if (B) x -= 5;
@@ -105,7 +105,7 @@ SHAPES = {
                 case 2: if ((j&1)!=0) x ^= 7; else x -= 2; break;
                 default: x += k+1; break;
             }
-            if ((j+k)&1) x += 1; else x -= 1;
+            if (((j+k)&1) != 0) x += 1; else x -= 1;
             k++;
         }
     }""",
