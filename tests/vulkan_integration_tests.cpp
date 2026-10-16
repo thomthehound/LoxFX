@@ -737,6 +737,54 @@ int main(int argc,char** argv) {
               std::abs(frame_b_positions[5].x-frame_b_positions[1].x)<0.001f,
               "host-queued Vulkan full frame failed guide-relative follower publication");
 
+        // Regression for a single frame clock: a non-default 1/30 s
+        // frame with active wind must agree with explicit stage-by-stage
+        // recording when BOTH stages receive the same time step.
+        auto clock_prep=loxfx::prepare_groom(fixture(0.0f,1),
+            {.followers_per_guide=1});
+        check(clock_prep.has_value(),"prepare wind/timestep regression groom");
+        auto composite=context.prepare(*clock_prep);
+        auto manual=context.prepare(*clock_prep);
+        HostBatch clock_batch(external_frame.logical);
+        clock_batch.init(external_frame.queue_family);
+        clock_batch.begin();
+        loxfx::NativeFrameParameters clock{};
+        clock.time_step=1.0f/30.0f;
+        clock.gravity=0.0f;
+        clock.root_translation_x=0.15f;
+        clock.length_iterations=2;
+        clock.winds[1]={420.0f,0.0f,0.0f,0.0f};
+        context.record_frame(clock_batch.commands,composite,clock);
+        loxfx::IntegrationParameters manual_integration{};
+        manual_integration.time_step=clock.time_step;
+        manual_integration.gravity=clock.gravity;
+        manual_integration.root_translation_x=clock.root_translation_x;
+        loxfx::LengthWindParameters manual_wind{};
+        manual_wind.time_step=clock.time_step;
+        manual_wind.length_iterations=clock.length_iterations;
+        manual_wind.winds=clock.winds;
+        context.record_integration(clock_batch.commands,manual,manual_integration);
+        context.record_strand_level(clock_batch.commands,manual,clock.strand_motion);
+        context.record_velocity_shock(clock_batch.commands,manual);
+        context.record_local_shape(clock_batch.commands,manual,clock.local_shape_stiffness);
+        context.record_length_wind(clock_batch.commands,manual,manual_wind);
+        context.record_followers(clock_batch.commands,manual);
+        clock_batch.submit(external_frame.compute_queue);
+        const auto composite_positions=context.diagnostic_read_positions(composite);
+        const auto manual_positions=context.diagnostic_read_positions(manual);
+        check(composite_positions.size()==manual_positions.size(),
+              "composite/manual frame output has different vertex counts");
+        for(std::size_t i=0;i<composite_positions.size();++i) {
+            const auto& a=composite_positions[i];
+            const auto& b=manual_positions[i];
+            check(std::abs(a.x-b.x)<0.0003f &&
+                  std::abs(a.y-b.y)<0.0003f &&
+                  std::abs(a.z-b.z)<0.0003f,
+                  "composite Vulkan frame disagrees with unified manual wind clock");
+        }
+        check(std::abs(manual_positions[2].x-clock_prep->rest_positions[2].x)>0.001f,
+              "Vulkan nonzero wind regression did not exercise affected vertices");
+
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
                   <<"\nShared GPU device: "<<shared
