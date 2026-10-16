@@ -729,9 +729,13 @@ int main(int argc,char** argv) {
         check(std::abs(frame_a_positions[0].x-0.25f)<0.001f &&
               std::abs(frame_b_positions[0].x+0.40f)<0.001f,
               "host-queued full native frame did not move independent roots");
-        check(std::abs(frame_a_positions[5].x-0.25f)<0.001f &&
-              std::abs(frame_b_positions[5].x+0.40f)<0.001f,
-              "host-queued full native frame did not publish followers");
+        // Stage six follows each *guide vertex* after shape/length passes:
+        // distal vertices need not translate rigidly with the guide root.
+        check(std::abs(frame_a_positions[4].x-frame_a_positions[0].x)<0.001f &&
+              std::abs(frame_a_positions[5].x-frame_a_positions[1].x)<0.001f &&
+              std::abs(frame_b_positions[4].x-frame_b_positions[0].x)<0.001f &&
+              std::abs(frame_b_positions[5].x-frame_b_positions[1].x)<0.001f,
+              "host-queued Vulkan full frame failed guide-relative follower publication");
 
         std::cout << "Vulkan device: "<<context.device_name()
                   <<(context.software_device()?" (software)":" (hardware)")
