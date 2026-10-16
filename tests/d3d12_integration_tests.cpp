@@ -53,11 +53,11 @@ void submit_host_commands(gpu::DeviceContext& context,
     if (second) {
         // Both six-stage frames are recorded into ONE host-owned list.
         loxfx::NativeFrameParameters a{};
-        a.integration.gravity=0.0f;
-        a.integration.root_translation_x=0.25f;
-        a.length_wind.length_iterations=2;
+        a.gravity=0.0f;
+        a.root_translation_x=0.25f;
+        a.length_iterations=2;
         loxfx::NativeFrameParameters b=a;
-        b.integration.root_translation_x=-0.40f;
+        b.root_translation_x=-0.40f;
         context.record_frame(commands.Get(),groom,a);
         context.record_frame(commands.Get(),*second,b);
     } else {
